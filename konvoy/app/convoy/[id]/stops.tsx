@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import {
 	View,
 	Text,
@@ -9,18 +15,25 @@ import {
 	TextInput,
 	Modal,
 	ActivityIndicator,
-	ActionSheetIOS,
 	Alert,
 	Linking,
 	Platform,
 	KeyboardAvoidingView,
 } from "react-native";
+import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Location from "expo-location";
 import { supabase } from "../../../src/lib/supabase";
 import { Button } from "../../../src/components/Button";
 import { Card } from "../../../src/components/Card";
-import { Colors, Spacing, FontSize, FontWeight, Radius, Shadow } from "../../../src/constants/theme";
+import {
+	Colors,
+	Spacing,
+	FontSize,
+	FontWeight,
+	Radius,
+	Shadow,
+} from "../../../src/constants/theme";
 import type {
 	Stop,
 	StopType,
@@ -144,9 +157,7 @@ export default function StopsScreen() {
 	const loadMembers = useCallback(async () => {
 		const { data, error: e } = await supabase
 			.from("convoy_members")
-			.select(
-				"id, user_id, role, users:user_id ( display_name, avatar_color )",
-			)
+			.select("id, user_id, role, users:user_id ( display_name, avatar_color )")
 			.eq("convoy_id", id);
 		if (e) throw e;
 		setMembers(
@@ -315,33 +326,26 @@ export default function StopsScreen() {
 	}
 
 	function openNavigate(stop: Stop) {
-		const gmaps = `https://maps.google.com/?q=${stop.lat},${stop.lng}`;
-		const waze = `https://waze.com/ul?ll=${stop.lat},${stop.lng}&navigate=yes`;
+		// Use the stop's coordinates as the destination, not the user's location.
+		// Google's `dir/?api=1&destination=...&travelmode=driving` deep link
+		// starts turn-by-turn directions from wherever the user currently is.
+		const lat = stop.lat;
+		const lng = stop.lng;
+		const gmaps = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
+		const waze = `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`;
 		const openUrl = (url: string) => Linking.openURL(url).catch(() => {});
 
-		if (Platform.OS === "ios") {
-			ActionSheetIOS.showActionSheetWithOptions(
-				{
-					title: `Navigate to ${stop.name}`,
-					options: ["Cancel", "Google Maps", "Waze"],
-					cancelButtonIndex: 0,
-				},
-				(index) => {
-					if (index === 1) openUrl(gmaps);
-					if (index === 2) openUrl(waze);
-				},
-			);
-		} else {
-			Alert.alert(`Navigate to ${stop.name}`, "Choose an app", [
-				{ text: "Google Maps", onPress: () => openUrl(gmaps) },
-				{ text: "Waze", onPress: () => openUrl(waze) },
-				{ text: "Cancel", style: "cancel" },
-			]);
-		}
+		Alert.alert("Navigate with", "Choose your navigation app", [
+			{ text: "Google Maps", onPress: () => openUrl(gmaps) },
+			{ text: "Waze", onPress: () => openUrl(waze) },
+			{ text: "Cancel", style: "cancel" },
+		]);
 	}
 
 	async function handlePropose(payload: {
 		name: string;
+		lat: number;
+		lng: number;
 		type: StopType;
 		duration_min: number;
 		note?: string;
@@ -354,24 +358,31 @@ export default function StopsScreen() {
 		setProposing(true);
 		setError("");
 		try {
-			const { status } = await Location.getForegroundPermissionsAsync();
-			let lat = 0;
-			let lng = 0;
-			if (status === "granted") {
-				try {
-					const loc = await Location.getLastKnownPositionAsync();
-					if (loc) {
-						lat = loc.coords.latitude;
-						lng = loc.coords.longitude;
-					} else {
-						const fresh = await Location.getCurrentPositionAsync({
-							accuracy: Location.Accuracy.Balanced,
-						});
-						lat = fresh.coords.latitude;
-						lng = fresh.coords.longitude;
+			let lat = payload.lat;
+			let lng = payload.lng;
+
+			// Fallback when no Places API key is configured: use the proposer's
+			// current location so the stop still has a usable coordinate pair.
+			if (
+				!Number.isFinite(lat) ||
+				!Number.isFinite(lng) ||
+				(lat === 0 && lng === 0)
+			) {
+				const { status } = await Location.getForegroundPermissionsAsync();
+				if (status === "granted") {
+					try {
+						const loc =
+							(await Location.getLastKnownPositionAsync()) ??
+							(await Location.getCurrentPositionAsync({
+								accuracy: Location.Accuracy.Balanced,
+							}));
+						if (loc) {
+							lat = loc.coords.latitude;
+							lng = loc.coords.longitude;
+						}
+					} catch {
+						// best effort
 					}
-				} catch {
-					// fall through with 0,0
 				}
 			}
 
@@ -413,10 +424,19 @@ export default function StopsScreen() {
 	}
 
 	function getArrivals(stopId: string) {
-		const memberIds = new Set(arrivals.filter((a) => a.stop_id === stopId).map((a) => a.convoy_member_id));
+		const memberIds = new Set(
+			arrivals
+				.filter((a) => a.stop_id === stopId)
+				.map((a) => a.convoy_member_id),
+		);
 		const arrivedMembers = members.filter((m) => memberIds.has(m.member_id));
 		const iArrived = memberIds.has(myMemberIdRef.current ?? "");
-		return { arrivedMembers, iArrived, count: memberIds.size, total: members.length };
+		return {
+			arrivedMembers,
+			iArrived,
+			count: memberIds.size,
+			total: members.length,
+		};
 	}
 
 	// ── Render ───────────────────────────────────────────────────────────────
@@ -517,14 +537,20 @@ export default function StopsScreen() {
 								{/* Vote + arrival summary */}
 								<View style={styles.summaryRow}>
 									<View style={styles.summaryItem}>
-										<Text style={styles.summaryStrong}>✅ {counts.approve}</Text>
+										<Text style={styles.summaryStrong}>
+											✅ {counts.approve}
+										</Text>
 									</View>
 									<View style={styles.summaryItem}>
-										<Text style={styles.summaryStrong}>❌ {counts.decline}</Text>
+										<Text style={styles.summaryStrong}>
+											❌ {counts.decline}
+										</Text>
 									</View>
 									{counts.neutral > 0 ? (
 										<View style={styles.summaryItem}>
-											<Text style={styles.summaryMuted}>— {counts.neutral}</Text>
+											<Text style={styles.summaryMuted}>
+												— {counts.neutral}
+											</Text>
 										</View>
 									) : null}
 									<View style={[styles.summaryItem, { marginLeft: "auto" }]}>
@@ -540,7 +566,10 @@ export default function StopsScreen() {
 										{arr.arrivedMembers.slice(0, 10).map((m) => (
 											<View
 												key={m.member_id}
-												style={[styles.arrivalDot, { backgroundColor: m.avatar_color }]}
+												style={[
+													styles.arrivalDot,
+													{ backgroundColor: m.avatar_color },
+												]}
 											/>
 										))}
 										{arr.arrivedMembers.length > 10 ? (
@@ -579,7 +608,11 @@ export default function StopsScreen() {
 												<Button
 													label="Confirm"
 													onPress={() => setStopStatus(stop.id, "confirmed")}
-													style={{ flex: 1, marginRight: Spacing.sm, minHeight: 44 }}
+													style={{
+														flex: 1,
+														marginRight: Spacing.sm,
+														minHeight: 44,
+													}}
 												/>
 												<Button
 													label="Cancel"
@@ -671,6 +704,8 @@ function VoteButton({
 }
 
 // ── Propose stop sheet ──────────────────────────────────────────────────────
+const PLACES_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_KEY ?? "";
+
 function ProposeStopSheet({
 	visible,
 	onClose,
@@ -681,6 +716,8 @@ function ProposeStopSheet({
 	onClose: () => void;
 	onSubmit: (payload: {
 		name: string;
+		lat: number;
+		lng: number;
 		type: StopType;
 		duration_min: number;
 		note?: string;
@@ -688,6 +725,8 @@ function ProposeStopSheet({
 	submitting: boolean;
 }) {
 	const [name, setName] = useState("");
+	const [lat, setLat] = useState(0);
+	const [lng, setLng] = useState(0);
 	const [type, setType] = useState<StopType>("fuel");
 	const [duration, setDuration] = useState(30);
 	const [note, setNote] = useState("");
@@ -696,6 +735,8 @@ function ProposeStopSheet({
 	useEffect(() => {
 		if (!visible) {
 			setName("");
+			setLat(0);
+			setLng(0);
 			setType("fuel");
 			setDuration(30);
 			setNote("");
@@ -711,6 +752,8 @@ function ProposeStopSheet({
 		setErr("");
 		onSubmit({
 			name: name.trim(),
+			lat,
+			lng,
 			type,
 			duration_min: duration,
 			note: note.trim() || undefined,
@@ -745,19 +788,102 @@ function ProposeStopSheet({
 					<ScrollView
 						contentContainerStyle={styles.sheetContent}
 						keyboardShouldPersistTaps="handled"
+						nestedScrollEnabled
 					>
 						<Text style={styles.label}>Name</Text>
-						<TextInput
-							style={[styles.input, err ? styles.inputError : null]}
-							value={name}
-							onChangeText={(t) => {
-								setName(t);
-								if (err) setErr("");
-							}}
-							placeholder="e.g. Total petrol station"
-							placeholderTextColor={Colors.textMuted}
-							maxLength={60}
-						/>
+						{PLACES_KEY ? (
+							<GooglePlacesAutocomplete
+								placeholder="Search for a place…"
+								fetchDetails
+								// Throttle requests + require at least 2 characters before
+								// hitting the API — without these defaults the package fires
+								// on every keystroke, often races itself, and looks broken.
+								debounce={400}
+								minLength={2}
+								timeout={15000}
+								keyboardShouldPersistTaps="handled"
+								listViewDisplayed="auto"
+								// Diagnostics: surface API problems instead of silently
+								// rendering an empty dropdown.
+								onFail={(e) => {
+									console.warn("[Places] onFail:", e);
+								}}
+								onNotFound={() => {
+									console.warn("[Places] onNotFound: no results");
+								}}
+								onTimeout={() => {
+									console.warn("[Places] onTimeout — request took >15s");
+								}}
+								onPress={(data, details = null) => {
+									// User picked a suggestion: use real Place coords.
+									setName(data.description);
+									setLat(details?.geometry?.location?.lat ?? 0);
+									setLng(details?.geometry?.location?.lng ?? 0);
+									if (err) setErr("");
+								}}
+								query={{
+									key: PLACES_KEY,
+									language: "en",
+									types: "establishment|geocode",
+								}}
+								// Sync the typed value into our state so the "Propose stop"
+								// button enables even when no suggestion is tapped (e.g.
+								// Places returns nothing). Reset lat/lng on edit so
+								// handlePropose() falls back to the user's current location.
+								textInputProps={{
+									placeholderTextColor: Colors.textMuted,
+									onChangeText: (t: string) => {
+										setName(t);
+										setLat(0);
+										setLng(0);
+										if (err) setErr("");
+									},
+								}}
+								enablePoweredByContainer={false}
+								styles={{
+									container: { flex: 0 },
+									textInput: {
+										backgroundColor: "#ffffff",
+										borderRadius: 12,
+										borderWidth: 1,
+										borderColor: "#e8e8e8",
+										fontSize: 15,
+										color: "#1a1a1a",
+										paddingHorizontal: 14,
+										height: 48,
+									},
+									listView: {
+										backgroundColor: "#ffffff",
+										borderRadius: 12,
+										marginTop: 4,
+										shadowColor: "#000",
+										shadowOffset: { width: 0, height: 4 },
+										shadowOpacity: 0.08,
+										shadowRadius: 12,
+										elevation: 4,
+									},
+									row: { backgroundColor: "#ffffff", padding: 12 },
+									description: { fontSize: 14, color: "#1a1a1a" },
+								}}
+							/>
+						) : (
+							<>
+								<TextInput
+									style={[styles.input, err ? styles.inputError : null]}
+									value={name}
+									onChangeText={(t) => {
+										setName(t);
+										if (err) setErr("");
+									}}
+									placeholder="e.g. Total petrol station"
+									placeholderTextColor={Colors.textMuted}
+									maxLength={60}
+								/>
+								<Text style={styles.placesHint}>
+									Add an EXPO_PUBLIC_GOOGLE_PLACES_KEY to .env for place search.
+								</Text>
+							</>
+						)}
 
 						<Text style={styles.label}>Type</Text>
 						<ScrollView
@@ -890,7 +1016,11 @@ const styles = StyleSheet.create({
 		marginHorizontal: Spacing.xl,
 		marginBottom: Spacing.md,
 	},
-	errorText: { fontSize: FontSize.sm, color: Colors.danger, fontWeight: FontWeight.medium },
+	errorText: {
+		fontSize: FontSize.sm,
+		color: Colors.danger,
+		fontWeight: FontWeight.medium,
+	},
 
 	// Empty
 	empty: {
@@ -979,7 +1109,12 @@ const styles = StyleSheet.create({
 	},
 
 	// Arrival dots
-	dotsRow: { flexDirection: "row", alignItems: "center", gap: 4, flexWrap: "wrap" },
+	dotsRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 4,
+		flexWrap: "wrap",
+	},
 	arrivalDot: {
 		width: 10,
 		height: 10,
@@ -1014,6 +1149,13 @@ const styles = StyleSheet.create({
 		fontWeight: FontWeight.semibold,
 	},
 	leaderRow: { flexDirection: "row" },
+	placesHint: {
+		fontSize: FontSize.xs,
+		color: Colors.textMuted,
+		marginTop: 6,
+		fontStyle: "italic",
+		fontWeight: FontWeight.regular,
+	},
 	confirmedRow: {
 		flexDirection: "row",
 		gap: 8,
@@ -1066,7 +1208,11 @@ const styles = StyleSheet.create({
 		fontWeight: FontWeight.regular,
 		padding: 4,
 	},
-	sheetContent: { padding: Spacing.xl, paddingTop: 0, paddingBottom: Spacing.xxl },
+	sheetContent: {
+		padding: Spacing.xl,
+		paddingTop: 0,
+		paddingBottom: Spacing.xxl,
+	},
 
 	// Form fields
 	label: {

@@ -5,7 +5,15 @@ import {
 	ActivityIndicator,
 	StyleSheet,
 	Pressable,
+	LogBox,
 } from "react-native";
+
+// Silence the known-benign warning from react-native-google-places-autocomplete
+// rendering its (very short) suggestion FlatList inside the propose-stop
+// ScrollView. Windowing matters for long lists; a 5-row dropdown is fine.
+LogBox.ignoreLogs([
+	"VirtualizedLists should never be nested inside plain ScrollViews",
+]);
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
