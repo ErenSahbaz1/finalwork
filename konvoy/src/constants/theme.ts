@@ -1,63 +1,133 @@
+import { Platform } from "react-native";
+
 export const Colors = {
-  // Brand
-  primary: '#33a86d',
-  primaryDim: 'rgba(51,168,109,0.15)',
-  primaryBorder: 'rgba(51,168,109,0.3)',
+	primary: "#1a1a1a",
+	primaryDim: "rgba(0,0,0,0.06)",
+	primaryBorder: "rgba(0,0,0,0.08)",
 
-  // Backgrounds
-  bg: '#0d0d0d',
-  bgCard: '#161616',
-  bgElevated: '#1f1f1f',
+	bg: "#efefef",
+	bgCard: "#f5f5f5",
+	bgElevated: "#ffffff",
 
-  // Text
-  textPrimary: '#ffffff',
-  textSecondary: '#888780',
-  textMuted: '#444',
+	textPrimary: "#1a1a1a",
+	textSecondary: "#555555",
+	textMuted: "#999999",
 
-  // Borders
-  border: '#1f1f1f',
-  borderSubtle: 'rgba(255,255,255,0.06)',
+	border: "transparent",
+	borderSubtle: "rgba(0,0,0,0.04)",
 
-  // Status / vehicle colors
-  vehicleGreen: '#33a86d',
-  vehicleBlue: '#378ADD',
-  vehicleOrange: '#D85A30',
-  vehiclePink: '#D4537E',
-  vehiclePurple: '#7F77DD',
-  vehicleYellow: '#EF9F27',
+	vehicleGreen: "#16a34a",
+	vehicleBlue: "#2563eb",
+	vehicleOrange: "#ea580c",
+	vehiclePink: "#db2777",
+	vehiclePurple: "#7c3aed",
+	vehicleYellow: "#d97706",
 
-  // Semantic
-  danger: '#E24B4A',
-  warning: '#EF9F27',
-  info: '#378ADD',
+	danger: "#dc2626",
+	warning: "#d97706",
+	info: "#2563eb",
+	online: "#16a34a",
 
-  // Overlays
-  overlay: 'rgba(13,13,13,0.92)',
+	overlay: "rgba(239,239,239,0.96)",
+	spotlight: "rgba(255,255,255,0.5)",
 };
 
 export const Spacing = {
-  xs: 4,
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 24,
-  xxl: 32,
+	xxs: 4,
+	xs: 8,
+	sm: 12,
+	md: 16,
+	lg: 24,
+	xl: 32,
+	xxl: 40,
+	buttonY: 14,
+	buttonX: 28,
 };
 
 export const Radius = {
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 20,
-  full: 9999,
+	sm: 10,
+	md: 14,
+	lg: 20,
+	xl: 24,
+	full: 999,
 };
 
 export const FontSize = {
-  xs: 9,
-  sm: 11,
-  md: 13,
-  lg: 15,
-  xl: 18,
-  xxl: 24,
-  display: 32,
+	xs: 11,
+	sm: 13,
+	md: 16,
+	lg: 20,
+	xl: 24,
+	xxl: 30,
+	display: 48,
 };
+
+export const FontWeight = {
+	thin: "200",
+	light: "300",
+	regular: "400",
+	medium: "500",
+	semibold: "600",
+} as const;
+
+export const Shadow = {
+	shadowRaised: {
+		shadowColor: "#ffffff",
+		shadowOffset: { width: -4, height: -4 },
+		shadowOpacity: 0.8,
+		shadowRadius: 8,
+		elevation: 0,
+	},
+	shadowRaisedDark: {
+		shadowColor: "#b0b0b0",
+		shadowOffset: { width: 4, height: 4 },
+		shadowOpacity: 0.5,
+		shadowRadius: 8,
+		elevation: 4,
+	},
+	shadowInset: {
+		backgroundColor: "#efefef",
+		shadowColor: "#b0b0b0",
+		shadowOffset: { width: 2, height: 2 },
+		shadowOpacity: 0.4,
+		shadowRadius: 4,
+		elevation: 0,
+	},
+	shadowFloat: {
+		shadowColor: "#b0b0b0",
+		shadowOffset: { width: 6, height: 6 },
+		shadowOpacity: 0.4,
+		shadowRadius: 12,
+		elevation: 6,
+	},
+
+	// Convenience aliases
+	sm: {
+		shadowColor: "#b0b0b0",
+		shadowOffset: { width: 2, height: 2 },
+		shadowOpacity: 0.25,
+		shadowRadius: 4,
+		elevation: 2,
+	},
+	md: {
+		shadowColor: "#b0b0b0",
+		shadowOffset: { width: 4, height: 4 },
+		shadowOpacity: 0.35,
+		shadowRadius: 8,
+		elevation: 4,
+	},
+	lg: {
+		shadowColor: "#b0b0b0",
+		shadowOffset: { width: 6, height: 8 },
+		shadowOpacity: 0.4,
+		shadowRadius: 16,
+		elevation: 8,
+	},
+};
+
+export const Sizing = {
+	touchTarget: 44,
+	dot: 8,
+};
+
+export const Mono = Platform.OS === "ios" ? "Courier" : "monospace";

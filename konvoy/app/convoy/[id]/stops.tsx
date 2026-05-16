@@ -598,14 +598,14 @@ export default function StopsScreen() {
 										<Button
 											label="🧭  Navigate"
 											onPress={() => openNavigate(stop)}
-											style={{ flex: 1, marginRight: Spacing.sm, minHeight: 44 }}
+											style={styles.confirmedBtn}
 										/>
 										<Button
 											label={arr.iArrived ? "✓ Arrived" : "I arrived"}
 											onPress={() => markArrived(stop.id)}
 											disabled={arr.iArrived}
-											variant={arr.iArrived ? "ghost" : "primary"}
-											style={{ flex: 1, minHeight: 44 }}
+											variant="ghost"
+											style={styles.confirmedBtn}
 										/>
 									</View>
 								) : null}
@@ -1014,7 +1014,16 @@ const styles = StyleSheet.create({
 		fontWeight: FontWeight.semibold,
 	},
 	leaderRow: { flexDirection: "row" },
-	confirmedRow: { flexDirection: "row" },
+	confirmedRow: {
+		flexDirection: "row",
+		gap: 8,
+		marginTop: 12,
+		alignItems: "stretch",
+	},
+	confirmedBtn: {
+		flex: 1,
+		height: 52,
+	},
 
 	// Modal
 	modalRoot: { flex: 1, justifyContent: "flex-end" },
