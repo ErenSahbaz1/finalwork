@@ -15,7 +15,7 @@ import MapView, { Marker, PROVIDER_DEFAULT } from "react-native-maps";
 import * as Location from "expo-location";
 import { supabase } from "../../../src/lib/supabase";
 import { VehicleDot } from "../../../src/components/VehicleDot";
-import { Colors, Spacing, FontSize, Radius } from "../../../src/constants/theme";
+import { Colors, Spacing, FontSize, FontWeight, Radius, Shadow } from "../../../src/constants/theme";
 import type {
 	Convoy,
 	ConvoyMember,
@@ -24,9 +24,7 @@ import type {
 	Stop,
 	StatusEventType,
 } from "../../../src/types";
-
-// TODO: Replace with real user ID from auth
-const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
+import { useUserStore } from "../../../src/store/userStore";
 
 const POSITION_UPDATE_MS = 3000;
 const STALE_THRESHOLD_MS = 30 * 1000;
@@ -61,6 +59,7 @@ const STOP_ICON: Record<string, string> = {
 export default function ConvoyMapScreen() {
 	const router = useRouter();
 	const { id } = useLocalSearchParams<{ id: string }>();
+	const userId = useUserStore((s) => s.userId);
 
 	const mapRef = useRef<MapView | null>(null);
 	const watcherRef = useRef<Location.LocationSubscription | null>(null);
@@ -127,7 +126,7 @@ export default function ConvoyMapScreen() {
 					display_name: r.users?.display_name ?? "Unknown",
 					avatar_color: r.users?.avatar_color ?? Colors.primary,
 				};
-				if (r.user_id === TEST_USER_ID) myId = r.id;
+				if (r.user_id === userId) myId = r.id;
 			}
 			myMemberIdRef.current = myId;
 			setMembers(map);
@@ -207,7 +206,7 @@ export default function ConvoyMapScreen() {
 		})();
 
 		const channel = supabase
-			.channel(`convoy-map:${id}`)
+			.channel(`convoy-map:${id}:${Math.random().toString(36).slice(2)}`)
 			.on(
 				"postgres_changes",
 				{ event: "INSERT", schema: "public", table: "live_positions" },
@@ -421,7 +420,7 @@ export default function ConvoyMapScreen() {
 					{
 						text: "Send",
 						style: "destructive",
-						onPress: (note) =>
+						onPress: (note?: string) =>
 							insertStatusEvent("emergency_stop", note?.slice(0, 120)),
 					},
 				],
@@ -547,12 +546,13 @@ export default function ConvoyMapScreen() {
 							anchor={{ x: 0.5, y: 0.5 }}
 							tracksViewChanges={false}
 						>
-							<View style={{ opacity: stale ? 0.5 : 1 }}>
+							<View style={[{ opacity: stale ? 0.5 : 1 }, Shadow.md]}>
 								<VehicleDot
 									color={m.avatar_color}
 									label={m.display_name}
 									size={42}
 									isLeader={m.role === "leader"}
+									withRing
 								/>
 							</View>
 						</Marker>
@@ -576,7 +576,7 @@ export default function ConvoyMapScreen() {
 			<SafeAreaView style={styles.overlay} edges={["top"]} pointerEvents="box-none">
 				{/* HUD top-left */}
 				<View style={styles.topRow} pointerEvents="box-none">
-					<View style={styles.hud}>
+					<View style={[styles.hud, Shadow.md]}>
 						<TouchableOpacity onPress={() => router.back()} hitSlop={8}>
 							<Text style={styles.hudBack}>←</Text>
 						</TouchableOpacity>
@@ -592,18 +592,18 @@ export default function ConvoyMapScreen() {
 
 					<View style={styles.mapButtons}>
 						<TouchableOpacity
-							style={styles.mapBtn}
+							style={[styles.mapBtn, Shadow.md]}
 							onPress={goToMe}
 							hitSlop={6}
 						>
-							<Text style={styles.mapBtnIcon}>📍</Text>
+							<Text style={styles.mapBtnLabel}>Me</Text>
 						</TouchableOpacity>
 						<TouchableOpacity
-							style={styles.mapBtn}
+							style={[styles.mapBtn, Shadow.md]}
 							onPress={fitAll}
 							hitSlop={6}
 						>
-							<Text style={styles.mapBtnIcon}>🚗</Text>
+							<Text style={styles.mapBtnLabel}>All</Text>
 						</TouchableOpacity>
 					</View>
 				</View>
@@ -618,7 +618,7 @@ export default function ConvoyMapScreen() {
 			{/* ── Bottom area ─────────────────────────────────────────────── */}
 			<View style={styles.bottomArea} pointerEvents="box-none">
 				{/* ETA bar */}
-				<View style={styles.etaBar}>
+				<View style={[styles.etaBar, Shadow.lg]}>
 					<View style={{ flex: 1 }}>
 						<Text style={styles.etaLabel}>
 							ETA to {nextStop ? nextStop.name : "leader"}
@@ -808,28 +808,31 @@ const styles = StyleSheet.create({
 	permTitle: {
 		color: Colors.textPrimary,
 		fontSize: FontSize.xl,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 		marginBottom: Spacing.sm,
 		textAlign: "center",
+		letterSpacing: -0.3,
 	},
 	permText: {
 		color: Colors.textMuted,
-		fontSize: FontSize.sm,
+		fontSize: FontSize.md,
 		textAlign: "center",
-		lineHeight: 20,
+		lineHeight: 22,
 		marginBottom: Spacing.xl,
+		fontWeight: FontWeight.regular,
 	},
 	permBtn: {
 		backgroundColor: Colors.primary,
 		paddingHorizontal: Spacing.xl,
-		paddingVertical: Spacing.md,
-		borderRadius: Radius.md,
+		paddingVertical: 14,
+		borderRadius: 14,
 		minHeight: 48,
 		justifyContent: "center",
+		...Shadow.sm,
 	},
-	permBtnText: { color: "#fff", fontWeight: "700", fontSize: FontSize.md },
+	permBtnText: { color: "#fff", fontWeight: FontWeight.semibold, fontSize: FontSize.md },
 	permBackBtn: { marginTop: Spacing.lg, minHeight: 44, justifyContent: "center" },
-	permBackText: { color: Colors.textMuted, fontSize: FontSize.sm },
+	permBackText: { color: Colors.textMuted, fontSize: FontSize.sm, fontWeight: FontWeight.medium },
 
 	// Overlay
 	overlay: {
@@ -851,54 +854,59 @@ const styles = StyleSheet.create({
 		marginRight: Spacing.sm,
 		flexDirection: "row",
 		alignItems: "center",
-		backgroundColor: "rgba(13,13,13,0.92)",
-		borderRadius: Radius.md,
-		borderWidth: 1,
-		borderColor: Colors.primaryBorder,
+		backgroundColor: Colors.overlay,
+		borderRadius: 14,
 		paddingHorizontal: Spacing.md,
 		paddingVertical: Spacing.sm,
 		gap: Spacing.sm,
 		minHeight: 56,
 	},
 	hudBack: {
-		color: Colors.primary,
-		fontSize: 24,
-		fontWeight: "700",
+		color: Colors.textPrimary,
+		fontSize: 22,
+		fontWeight: FontWeight.semibold,
 		paddingRight: Spacing.xs,
 	},
 	hudTitle: {
 		color: Colors.textPrimary,
 		fontSize: FontSize.md,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 	},
-	hudSub: { color: Colors.textMuted, fontSize: FontSize.xs, marginTop: 2 },
+	hudSub: {
+		color: Colors.textMuted,
+		fontSize: FontSize.xs,
+		marginTop: 2,
+		fontWeight: FontWeight.regular,
+	},
 
 	// Map buttons
 	mapButtons: { gap: Spacing.sm },
 	mapBtn: {
-		width: 48,
-		height: 48,
-		borderRadius: Radius.md,
-		backgroundColor: "rgba(13,13,13,0.92)",
-		borderWidth: 1,
-		borderColor: Colors.primaryBorder,
+		width: 52,
+		height: 52,
+		borderRadius: 14,
+		backgroundColor: Colors.overlay,
 		alignItems: "center",
 		justifyContent: "center",
 	},
-	mapBtnIcon: { fontSize: 20 },
+	mapBtnLabel: {
+		color: Colors.textPrimary,
+		fontSize: FontSize.sm,
+		fontWeight: FontWeight.semibold,
+	},
 
 	// Stop marker
 	stopMarker: {
 		width: 40,
 		height: 40,
 		borderRadius: 20,
-		backgroundColor: Colors.warning,
+		backgroundColor: Colors.primary,
 		borderWidth: 3,
 		borderColor: "#fff",
 		alignItems: "center",
 		justifyContent: "center",
 	},
-	stopMarkerIcon: { fontSize: 18 },
+	stopMarkerIcon: { fontSize: 16, color: "#fff" },
 
 	// Bottom area
 	bottomArea: {
@@ -912,44 +920,54 @@ const styles = StyleSheet.create({
 	etaBar: {
 		flexDirection: "row",
 		alignItems: "center",
-		backgroundColor: "rgba(13,13,13,0.95)",
-		paddingHorizontal: Spacing.md,
+		backgroundColor: Colors.bgCard,
+		paddingHorizontal: Spacing.lg,
 		paddingVertical: Spacing.md,
-		borderTopLeftRadius: Radius.lg,
-		borderTopRightRadius: Radius.lg,
-		borderWidth: 1,
-		borderColor: Colors.borderSubtle,
+		borderTopLeftRadius: 20,
+		borderTopRightRadius: 20,
 		gap: Spacing.md,
 	},
 	etaLabel: {
 		color: Colors.textMuted,
 		fontSize: FontSize.xs,
 		textTransform: "uppercase",
-		letterSpacing: 1,
-		marginBottom: 6,
+		letterSpacing: 0.8,
+		fontWeight: FontWeight.semibold,
+		marginBottom: 8,
 	},
 	etaRow: { flexDirection: "row", alignItems: "center", gap: Spacing.md },
-	etaEmpty: { color: Colors.textMuted, fontSize: FontSize.xs },
+	etaEmpty: {
+		color: Colors.textMuted,
+		fontSize: FontSize.sm,
+		fontWeight: FontWeight.regular,
+	},
 	etaItem: { flexDirection: "row", alignItems: "center", gap: 6 },
 	etaDot: { width: 10, height: 10, borderRadius: 5 },
-	etaMin: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: "700" },
+	etaMin: {
+		color: Colors.textPrimary,
+		fontSize: FontSize.sm,
+		fontWeight: FontWeight.semibold,
+	},
 	followBtn: {
 		backgroundColor: Colors.primary,
-		paddingHorizontal: Spacing.md,
+		paddingHorizontal: Spacing.lg,
 		paddingVertical: Spacing.sm,
-		borderRadius: Radius.md,
+		borderRadius: 12,
 		minHeight: 44,
 		justifyContent: "center",
 	},
-	followBtnText: { color: "#fff", fontWeight: "700", fontSize: FontSize.xs },
+	followBtnText: {
+		color: "#fff",
+		fontWeight: FontWeight.semibold,
+		fontSize: FontSize.sm,
+	},
 
 	// Panel
 	panel: {
-		backgroundColor: Colors.bg,
-		paddingHorizontal: Spacing.md,
+		backgroundColor: Colors.bgCard,
+		paddingHorizontal: Spacing.lg,
 		paddingTop: Spacing.md,
-		borderTopWidth: 1,
-		borderTopColor: Colors.borderSubtle,
+		...Shadow.lg,
 	},
 
 	// Next stop card
@@ -957,37 +975,37 @@ const styles = StyleSheet.create({
 		flexDirection: "row",
 		alignItems: "center",
 		backgroundColor: Colors.bgCard,
-		borderRadius: Radius.md,
-		borderWidth: 1,
-		borderColor: Colors.primaryBorder,
+		borderRadius: 14,
 		padding: Spacing.md,
 		marginBottom: Spacing.md,
 		gap: Spacing.md,
 		minHeight: 64,
+		...Shadow.sm,
 	},
 	stopIconBox: {
 		width: 44,
 		height: 44,
-		borderRadius: Radius.md,
-		backgroundColor: Colors.primaryDim,
+		borderRadius: 12,
+		backgroundColor: Colors.bgElevated,
 		alignItems: "center",
 		justifyContent: "center",
 	},
-	stopIconText: { fontSize: 22 },
+	stopIconText: { fontSize: 20 },
 	nextStopName: {
 		color: Colors.textPrimary,
 		fontSize: FontSize.md,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 	},
 	nextStopMeta: {
 		color: Colors.textMuted,
-		fontSize: FontSize.xs,
+		fontSize: FontSize.sm,
 		marginTop: 2,
+		fontWeight: FontWeight.regular,
 	},
 	nextStopChevron: {
 		color: Colors.textMuted,
-		fontSize: 28,
-		fontWeight: "300",
+		fontSize: 24,
+		fontWeight: FontWeight.light,
 	},
 
 	// Quick buttons
@@ -999,31 +1017,30 @@ const styles = StyleSheet.create({
 	quickBtn: {
 		flex: 1,
 		backgroundColor: Colors.bgCard,
-		borderRadius: Radius.md,
-		borderWidth: 1,
-		borderColor: Colors.borderSubtle,
+		borderRadius: 12,
 		alignItems: "center",
 		justifyContent: "center",
-		paddingVertical: Spacing.sm,
-		minHeight: 56,
+		paddingVertical: Spacing.md,
+		minHeight: 60,
+		...Shadow.sm,
 	},
 	quickBtnDanger: {
-		backgroundColor: "rgba(226,75,74,0.15)",
-		borderColor: Colors.danger,
+		backgroundColor: Colors.danger,
 	},
-	quickBtnIcon: { fontSize: 20, marginBottom: 4 },
+	quickBtnIcon: { fontSize: 18, marginBottom: 4 },
 	quickBtnLabel: {
 		color: Colors.textPrimary,
 		fontSize: FontSize.xs,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
+		letterSpacing: 0.2,
 	},
-	quickBtnLabelDanger: { color: Colors.danger },
+	quickBtnLabelDanger: { color: "#fff" },
 
 	// Tab bar
 	tabBar: {
 		flexDirection: "row",
 		borderTopWidth: 1,
-		borderTopColor: Colors.borderSubtle,
+		borderTopColor: Colors.border,
 		paddingTop: Spacing.sm,
 	},
 	tabItem: {
@@ -1033,13 +1050,13 @@ const styles = StyleSheet.create({
 		paddingVertical: Spacing.sm,
 		minHeight: 48,
 	},
-	tabIcon: { fontSize: 18, opacity: 0.6 },
+	tabIcon: { fontSize: 16, opacity: 0.5 },
 	tabIconActive: { opacity: 1 },
 	tabLabel: {
 		color: Colors.textMuted,
 		fontSize: FontSize.xs,
-		fontWeight: "700",
-		marginTop: 2,
+		fontWeight: FontWeight.medium,
+		marginTop: 4,
 	},
-	tabLabelActive: { color: Colors.primary },
+	tabLabelActive: { color: Colors.textPrimary, fontWeight: FontWeight.semibold },
 });

@@ -7,19 +7,25 @@ import {
 	TextInput,
 	ScrollView,
 	TouchableOpacity,
-	ActivityIndicator,
-	Alert,
 	Share,
 } from "react-native";
 import { useRouter } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
 import { supabase } from "../../src/lib/supabase";
 import { Button } from "../../src/components/Button";
-import { Card } from "../../src/components/Card";
-import { Colors, Spacing, FontSize, Radius } from "../../src/constants/theme";
-
-// TODO: Replace with real user ID from auth
-const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
+import { FadeInView } from "../../src/components/FadeInView";
+import { NeumorphicView } from "../../src/components/NeumorphicView";
+import { SoftBackground } from "../../src/components/SoftBackground";
+import {
+	Colors,
+	Spacing,
+	FontSize,
+	Radius,
+	FontWeight,
+	Mono,
+	Sizing,
+} from "../../src/constants/theme";
+import { useUserStore } from "../../src/store/userStore";
 
 function generateInviteCode(): string {
 	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -28,9 +34,9 @@ function generateInviteCode(): string {
 	).join("");
 }
 
-
 export default function CreateConvoyScreen() {
 	const router = useRouter();
+	const userId = useUserStore((s) => s.userId);
 	const [title, setTitle] = useState("");
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState("");
@@ -44,6 +50,10 @@ export default function CreateConvoyScreen() {
 			setError("Give your convoy a name first.");
 			return;
 		}
+		if (!userId) {
+			setError("Still signing you in — try again in a sec.");
+			return;
+		}
 		setError("");
 		setLoading(true);
 
@@ -53,11 +63,10 @@ export default function CreateConvoyScreen() {
 				Date.now() + 48 * 60 * 60 * 1000,
 			).toISOString();
 
-			// TODO: Replace TEST_USER_ID with real auth user ID
 			const { data, error: dbError } = await supabase
 				.from("convoys")
 				.insert({
-					created_by: TEST_USER_ID,
+					created_by: userId,
 					title: title.trim(),
 					invite_code,
 					status: "preparation",
@@ -68,10 +77,9 @@ export default function CreateConvoyScreen() {
 
 			if (dbError) throw dbError;
 
-			// Add creator as leader in convoy_members
 			await supabase.from("convoy_members").insert({
 				convoy_id: data.id,
-				user_id: TEST_USER_ID,
+				user_id: userId,
 				role: "leader",
 				status: "online",
 			});
@@ -87,7 +95,7 @@ export default function CreateConvoyScreen() {
 	async function handleShare() {
 		if (!createdConvoy) return;
 		await Share.share({
-			message: `Join my Konvoy! 🚗\nUse code: ${createdConvoy.invite_code}\nOr open the app and enter the code manually.`,
+			message: `Join my Konvoy. Use code: ${createdConvoy.invite_code}`,
 		});
 	}
 
@@ -98,246 +106,237 @@ export default function CreateConvoyScreen() {
 
 	return (
 		<SafeAreaView style={styles.safe}>
-			<ScrollView
-				contentContainerStyle={styles.container}
-				keyboardShouldPersistTaps="handled"
-			>
-				{/* Header */}
-				<View style={styles.header}>
-					<TouchableOpacity
-						onPress={() => router.back()}
-						style={styles.backBtn}
-					>
-						<Text style={styles.backText}>← Back</Text>
-					</TouchableOpacity>
-					<Text style={styles.title}>New convoy</Text>
-					<View style={{ width: 60 }} />
-				</View>
-
-				{!createdConvoy ? (
-					/* ── Setup form ── */
-					<View style={styles.form}>
-						<View style={styles.heroIcon}>
-							<Text style={styles.heroEmoji}>🚗</Text>
-						</View>
-						<Text style={styles.formTitle}>Set up your convoy</Text>
-						<Text style={styles.formSub}>
-							You'll be the leader. Share the invite code with your group.
-						</Text>
-
-						<Text style={styles.label}>Convoy name</Text>
-						<TextInput
-							style={[styles.input, error ? styles.inputError : null]}
-							value={title}
-							onChangeText={(t) => {
-								setTitle(t);
-								setError("");
-							}}
-							placeholder="e.g. Bursa 2026 🇹🇷"
-							placeholderTextColor={Colors.textMuted}
-							autoFocus
-							maxLength={40}
-						/>
-						<Text style={styles.charCount}>{title.length}/40</Text>
-
-						{error ? (
-							<View style={styles.errorBox}>
-								<Text style={styles.errorText}>⚠️ {error}</Text>
-							</View>
-						) : null}
-
-						<Button
-							label="Create convoy"
-							onPress={handleCreate}
-							loading={loading}
-							disabled={!title.trim()}
-							style={styles.createBtn}
-						/>
+			<SoftBackground />
+			<FadeInView style={styles.flex}>
+				<ScrollView
+					contentContainerStyle={styles.container}
+					keyboardShouldPersistTaps="handled"
+				>
+					<View style={styles.header}>
+						<TouchableOpacity
+							onPress={() => router.back()}
+							style={styles.backBtn}
+							hitSlop={12}
+						>
+							<Text style={styles.backText}>Back</Text>
+						</TouchableOpacity>
+						<View style={{ width: 50 }} />
 					</View>
-				) : (
-					/* ── Success: show QR + code ── */
-					<View style={styles.success}>
-						<View style={styles.successHeader}>
-							<Text style={styles.successEmoji}>🎉</Text>
+
+					{!createdConvoy ? (
+						<View style={styles.form}>
+							<Text style={styles.title}>New convoy</Text>
+							<Text style={styles.sub}>
+								You'll be the leader. Share the invite code with your group.
+							</Text>
+
+							<Text style={styles.label}>Convoy name</Text>
+							<NeumorphicView pressed style={styles.inputWrap}>
+								<TextInput
+									style={styles.input}
+									value={title}
+									onChangeText={(t) => {
+										setTitle(t);
+										setError("");
+									}}
+									placeholder="Bursa 2026"
+									placeholderTextColor={Colors.textMuted}
+									autoFocus
+									maxLength={40}
+								/>
+							</NeumorphicView>
+							<Text style={styles.charCount}>{title.length}/40</Text>
+
+							{error ? (
+								<NeumorphicView style={styles.errorBox}>
+									<Text style={styles.errorText}>{error}</Text>
+								</NeumorphicView>
+							) : null}
+
+							<Button
+								label="Create convoy"
+								onPress={handleCreate}
+								loading={loading}
+								disabled={!title.trim()}
+								style={styles.createBtn}
+							/>
+						</View>
+					) : (
+						<View style={styles.success}>
 							<Text style={styles.successTitle}>{title}</Text>
 							<Text style={styles.successSub}>
 								Your convoy is ready. Share the code below.
 							</Text>
-						</View>
 
-						{/* QR Code */}
-						<Card style={styles.qrCard}>
-							<Text style={styles.qrLabel}>Scan to join</Text>
-							<View style={styles.qrWrapper}>
-								<QRCode
-									value={createdConvoy.invite_code}
-									size={180}
-									color={Colors.textPrimary}
-									backgroundColor={Colors.bgCard}
+							<NeumorphicView style={styles.qrCard}>
+								<Text style={styles.qrLabel}>Scan to join</Text>
+								<View style={styles.qrWrapper}>
+									<QRCode
+										value={createdConvoy.invite_code}
+										size={200}
+										color="#000000"
+										backgroundColor="#ffffff"
+									/>
+								</View>
+								<Text style={styles.codeLabel}>or enter this code</Text>
+								<Text style={styles.codeText}>{createdConvoy.invite_code}</Text>
+								<Text style={styles.codeExpiry}>Expires in 48 hours</Text>
+							</NeumorphicView>
+
+							<View style={styles.successActions}>
+								<Button label="Share invite" onPress={handleShare} />
+								<Button
+									label="Go to lobby"
+									variant="ghost"
+									onPress={handleGoToLobby}
 								/>
 							</View>
-						</Card>
-
-						{/* Invite code */}
-						<Card style={styles.codeCard}>
-							<Text style={styles.codeLabel}>Or enter this code</Text>
-							<Text style={styles.codeText}>{createdConvoy.invite_code}</Text>
-							<Text style={styles.codeExpiry}>Expires in 48 hours</Text>
-						</Card>
-
-						{/* Actions */}
-						<Button
-							label="📤  Share invite"
-							onPress={handleShare}
-							style={styles.shareBtn}
-						/>
-						<Button
-							label="Go to lobby →"
-							onPress={handleGoToLobby}
-							style={styles.lobbyBtn}
-						/>
-					</View>
-				)}
-			</ScrollView>
+						</View>
+					)}
+				</ScrollView>
+			</FadeInView>
 		</SafeAreaView>
 	);
 }
 
 const styles = StyleSheet.create({
 	safe: { flex: 1, backgroundColor: Colors.bg },
+	flex: { flex: 1 },
 	container: { padding: Spacing.xl, flexGrow: 1 },
 
-	// Header
 	header: {
 		flexDirection: "row",
 		alignItems: "center",
 		justifyContent: "space-between",
 		marginBottom: Spacing.xl,
 	},
-	backBtn: { padding: Spacing.xs },
-	backText: { fontSize: FontSize.sm, color: Colors.primary },
-	title: {
-		fontSize: FontSize.lg,
-		fontWeight: "700",
+	backBtn: {
+		padding: Spacing.xs,
+		minHeight: Sizing.touchTarget,
+		justifyContent: "center",
+	},
+	backText: {
+		fontSize: FontSize.sm,
 		color: Colors.textPrimary,
+		fontWeight: FontWeight.medium,
 	},
 
-	// Form
 	form: { flex: 1 },
-	heroIcon: {
-		width: 72,
-		height: 72,
-		borderRadius: 22,
-		backgroundColor: Colors.bgCard,
-		borderWidth: 1,
-		borderColor: Colors.primaryBorder,
-		alignSelf: "center",
-		alignItems: "center",
-		justifyContent: "center",
-		marginBottom: Spacing.lg,
-	},
-	heroEmoji: { fontSize: 36 },
-	formTitle: {
-		fontSize: FontSize.xl,
-		fontWeight: "700",
+	title: {
+		fontSize: FontSize.xxl,
+		fontWeight: FontWeight.light,
 		color: Colors.textPrimary,
-		textAlign: "center",
-		marginBottom: Spacing.xs,
+		marginBottom: Spacing.sm,
+		letterSpacing: -0.5,
 	},
-	formSub: {
-		fontSize: FontSize.sm,
+	sub: {
+		fontSize: FontSize.md,
 		color: Colors.textMuted,
-		textAlign: "center",
-		lineHeight: 20,
+		lineHeight: 22,
 		marginBottom: Spacing.xl,
+		fontWeight: FontWeight.regular,
 	},
 	label: {
 		fontSize: FontSize.xs,
+		fontWeight: FontWeight.semibold,
 		color: Colors.textMuted,
-		marginBottom: Spacing.xs,
+		textTransform: "uppercase",
+		letterSpacing: 0.8,
+		marginBottom: Spacing.sm,
+	},
+	inputWrap: {
+		backgroundColor: Colors.bgCard,
+		borderRadius: Radius.lg,
+		paddingHorizontal: Spacing.lg,
+		paddingVertical: Spacing.md,
+		minHeight: Sizing.touchTarget,
+		justifyContent: "center",
 	},
 	input: {
-		backgroundColor: Colors.bgCard,
-		borderWidth: 1,
-		borderColor: Colors.primary,
-		borderRadius: Radius.md,
-		padding: Spacing.md,
-		fontSize: FontSize.lg,
+		backgroundColor: "transparent",
+		fontSize: FontSize.md,
 		color: Colors.textPrimary,
-		fontWeight: "600",
+		fontWeight: FontWeight.regular,
 	},
-	inputError: { borderColor: Colors.danger },
 	charCount: {
 		fontSize: FontSize.xs,
 		color: Colors.textMuted,
 		textAlign: "right",
-		marginTop: Spacing.xs,
+		marginTop: 6,
 		marginBottom: Spacing.md,
+		fontWeight: FontWeight.regular,
 	},
 	errorBox: {
-		backgroundColor: "rgba(226,75,74,0.1)",
-		borderRadius: Radius.sm,
-		borderWidth: 1,
-		borderColor: Colors.danger,
+		backgroundColor: "rgba(220,38,38,0.08)",
+		borderRadius: Radius.lg,
 		padding: Spacing.md,
 		marginBottom: Spacing.md,
 	},
-	errorText: { fontSize: FontSize.sm, color: Colors.danger },
+	errorText: {
+		fontSize: FontSize.sm,
+		color: Colors.danger,
+		fontWeight: FontWeight.medium,
+	},
 	createBtn: { marginTop: Spacing.md },
 
-	// Success
-	success: { flex: 1 },
-	successHeader: { alignItems: "center", marginBottom: Spacing.xl },
-	successEmoji: { fontSize: 48, marginBottom: Spacing.sm },
+	success: { flex: 1, alignItems: "stretch" },
 	successTitle: {
 		fontSize: FontSize.xxl,
-		fontWeight: "700",
+		fontWeight: FontWeight.light,
 		color: Colors.textPrimary,
-		marginBottom: Spacing.xs,
+		marginBottom: Spacing.sm,
+		letterSpacing: -0.5,
 	},
 	successSub: {
-		fontSize: FontSize.sm,
+		fontSize: FontSize.md,
 		color: Colors.textMuted,
-		textAlign: "center",
+		lineHeight: 22,
+		marginBottom: Spacing.xl,
+		fontWeight: FontWeight.regular,
 	},
 
-	// QR
-	qrCard: { alignItems: "center", marginBottom: Spacing.md },
+	qrCard: {
+		backgroundColor: Colors.bgCard,
+		borderRadius: Radius.xl,
+		padding: Spacing.xl,
+		alignItems: "center",
+		marginBottom: Spacing.xl,
+	},
 	qrLabel: {
 		fontSize: FontSize.xs,
 		color: Colors.textMuted,
 		textTransform: "uppercase",
-		letterSpacing: 1,
-		marginBottom: Spacing.md,
+		letterSpacing: 0.8,
+		fontWeight: FontWeight.semibold,
+		marginBottom: Spacing.lg,
 	},
 	qrWrapper: {
 		padding: Spacing.md,
-		backgroundColor: Colors.bgCard,
+		backgroundColor: "#fff",
 		borderRadius: Radius.md,
+		marginBottom: Spacing.xl,
 	},
-
-	// Code
-	codeCard: { alignItems: "center", marginBottom: Spacing.xl },
 	codeLabel: {
 		fontSize: FontSize.xs,
 		color: Colors.textMuted,
 		textTransform: "uppercase",
-		letterSpacing: 1,
+		letterSpacing: 0.8,
+		fontWeight: FontWeight.semibold,
 		marginBottom: Spacing.sm,
 	},
 	codeText: {
-		fontSize: 38,
-		fontWeight: "700",
-		color: Colors.primary,
-		letterSpacing: 8,
+		fontFamily: Mono,
+		fontSize: 36,
+		fontWeight: FontWeight.semibold,
+		color: Colors.textPrimary,
+		letterSpacing: 5,
 	},
 	codeExpiry: {
-		fontSize: FontSize.xs,
+		fontSize: FontSize.sm,
 		color: Colors.textMuted,
-		marginTop: Spacing.xs,
+		marginTop: Spacing.sm,
+		fontWeight: FontWeight.regular,
 	},
 
-	// Buttons
-	shareBtn: { marginBottom: Spacing.sm, backgroundColor: Colors.bgElevated },
-	lobbyBtn: {},
+	successActions: { gap: Spacing.md },
 });

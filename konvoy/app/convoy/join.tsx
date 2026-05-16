@@ -8,21 +8,31 @@ import {
 	ScrollView,
 	TouchableOpacity,
 	Modal,
-	Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { supabase } from "../../src/lib/supabase";
 import { Button } from "../../src/components/Button";
-import { Colors, Spacing, FontSize, Radius } from "../../src/constants/theme";
-
-// TODO: Replace with real user ID from auth
-const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
+import { FadeInView } from "../../src/components/FadeInView";
+import { NeumorphicView } from "../../src/components/NeumorphicView";
+import { SoftBackground } from "../../src/components/SoftBackground";
+import {
+	Colors,
+	Spacing,
+	FontSize,
+	FontWeight,
+	Radius,
+	Shadow,
+	Sizing,
+	Mono,
+} from "../../src/constants/theme";
+import { useUserStore } from "../../src/store/userStore";
 
 const CODE_LENGTH = 6;
 
 export default function JoinConvoyScreen() {
 	const router = useRouter();
+	const userId = useUserStore((s) => s.userId);
 	const [code, setCode] = useState("");
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState("");
@@ -34,6 +44,10 @@ export default function JoinConvoyScreen() {
 		const cleanCode = rawCode.trim().toUpperCase();
 		if (cleanCode.length !== CODE_LENGTH) {
 			setError("Invite code must be 6 characters.");
+			return;
+		}
+		if (!userId) {
+			setError("Still signing you in — try again in a sec.");
 			return;
 		}
 		setError("");
@@ -60,7 +74,7 @@ export default function JoinConvoyScreen() {
 				.from("convoy_members")
 				.select("id")
 				.eq("convoy_id", convoy.id)
-				.eq("user_id", TEST_USER_ID)
+				.eq("user_id", userId)
 				.maybeSingle();
 
 			if (memberErr) throw memberErr;
@@ -70,7 +84,7 @@ export default function JoinConvoyScreen() {
 					.from("convoy_members")
 					.insert({
 						convoy_id: convoy.id,
-						user_id: TEST_USER_ID,
+						user_id: userId,
 						role: "member",
 						status: "online",
 					});
@@ -129,81 +143,77 @@ export default function JoinConvoyScreen() {
 
 	return (
 		<SafeAreaView style={styles.safe}>
-			<ScrollView
-				contentContainerStyle={styles.container}
-				keyboardShouldPersistTaps="handled"
-			>
-				{/* Header */}
-				<View style={styles.header}>
-					<TouchableOpacity
-						onPress={() => router.back()}
-						style={styles.backBtn}
-						hitSlop={12}
-					>
-						<Text style={styles.backText}>← Back</Text>
-					</TouchableOpacity>
-					<Text style={styles.title}>Join convoy</Text>
-					<View style={{ width: 60 }} />
-				</View>
-
-				<View style={styles.heroIcon}>
-					<Text style={styles.heroEmoji}>🔑</Text>
-				</View>
-				<Text style={styles.formTitle}>Enter your invite</Text>
-				<Text style={styles.formSub}>
-					Type the 6-character code or scan a QR code from the leader.
-				</Text>
-
-				{/* Code input */}
-				<Text style={styles.label}>Invite code</Text>
-				<TextInput
-					style={[styles.codeInput, error ? styles.inputError : null]}
-					value={code}
-					onChangeText={handleCodeChange}
-					placeholder="ABC123"
-					placeholderTextColor={Colors.textMuted}
-					autoCapitalize="characters"
-					autoCorrect={false}
-					autoComplete="off"
-					maxLength={CODE_LENGTH}
-					selectionColor={Colors.primary}
-					returnKeyType="go"
-					onSubmitEditing={() => canSubmit && joinWithCode(code)}
-				/>
-				<Text style={styles.charCount}>
-					{code.length}/{CODE_LENGTH}
-				</Text>
-
-				{error ? (
-					<View style={styles.errorBox}>
-						<Text style={styles.errorText}>⚠️ {error}</Text>
+			<SoftBackground />
+			<FadeInView style={styles.flex}>
+				<ScrollView
+					contentContainerStyle={styles.container}
+					keyboardShouldPersistTaps="handled"
+				>
+					<View style={styles.header}>
+						<TouchableOpacity
+							onPress={() => router.back()}
+							style={styles.backBtn}
+							hitSlop={12}
+						>
+							<Text style={styles.backText}>Back</Text>
+						</TouchableOpacity>
+						<View style={{ width: 50 }} />
 					</View>
-				) : null}
 
-				<Button
-					label="Join convoy"
-					onPress={() => joinWithCode(code)}
-					loading={loading}
-					disabled={!canSubmit}
-					style={styles.joinBtn}
-				/>
+					<Text style={styles.title}>Join a convoy</Text>
+					<Text style={styles.sub}>
+						Type the 6-character code or scan a QR from the leader.
+					</Text>
 
-				{/* Divider */}
-				<View style={styles.dividerRow}>
-					<View style={styles.dividerLine} />
-					<Text style={styles.dividerText}>OR</Text>
-					<View style={styles.dividerLine} />
-				</View>
+					<Text style={styles.label}>Invite code</Text>
+					<NeumorphicView pressed style={styles.codeInputWrap}>
+						<TextInput
+							style={[styles.codeInput, error ? styles.inputError : null]}
+							value={code}
+							onChangeText={handleCodeChange}
+							placeholder="ABC123"
+							placeholderTextColor={Colors.textMuted}
+							autoCapitalize="characters"
+							autoCorrect={false}
+							autoComplete="off"
+							maxLength={CODE_LENGTH}
+							selectionColor={Colors.primary}
+							returnKeyType="go"
+							onSubmitEditing={() => canSubmit && joinWithCode(code)}
+						/>
+					</NeumorphicView>
+					<Text style={styles.charCount}>
+						{code.length}/{CODE_LENGTH}
+					</Text>
 
-				<Button
-					label="📷  Scan QR code"
-					onPress={handleOpenScanner}
-					variant="ghost"
-					style={styles.scanBtn}
-				/>
-			</ScrollView>
+					{error ? (
+						<NeumorphicView style={styles.errorBox}>
+							<Text style={styles.errorText}>{error}</Text>
+						</NeumorphicView>
+					) : null}
 
-			{/* QR Scanner Modal */}
+					<Button
+						label="Join convoy"
+						onPress={() => joinWithCode(code)}
+						loading={loading}
+						disabled={!canSubmit}
+						style={styles.joinBtn}
+					/>
+
+					<View style={styles.dividerRow}>
+						<View style={styles.dividerLine} />
+						<Text style={styles.dividerText}>or</Text>
+						<View style={styles.dividerLine} />
+					</View>
+
+					<Button
+						label="Scan QR code"
+						onPress={handleOpenScanner}
+						variant="ghost"
+					/>
+				</ScrollView>
+			</FadeInView>
+
 			<Modal
 				visible={scannerOpen}
 				animationType="slide"
@@ -226,7 +236,6 @@ export default function JoinConvoyScreen() {
 						</View>
 					)}
 
-					{/* Dim overlay with cut-out frame */}
 					<View style={styles.overlayTop} />
 					<View style={styles.overlayMiddle}>
 						<View style={styles.overlaySide} />
@@ -242,8 +251,8 @@ export default function JoinConvoyScreen() {
 						<Text style={styles.scanLabel}>Point at QR code</Text>
 						<TouchableOpacity
 							onPress={handleCloseScanner}
-							style={styles.cancelBtn}
-							activeOpacity={0.75}
+							style={[styles.cancelBtn, Shadow.md]}
+							activeOpacity={0.85}
 						>
 							<Text style={styles.cancelText}>Cancel</Text>
 						</TouchableOpacity>
@@ -255,145 +264,131 @@ export default function JoinConvoyScreen() {
 }
 
 const FRAME_SIZE = 260;
-const CORNER_SIZE = 28;
+const CORNER_SIZE = 32;
 const CORNER_THICKNESS = 4;
 
 const styles = StyleSheet.create({
 	safe: { flex: 1, backgroundColor: Colors.bg },
+	flex: { flex: 1 },
 	container: { padding: Spacing.xl, flexGrow: 1 },
 
-	// Header
 	header: {
 		flexDirection: "row",
 		alignItems: "center",
 		justifyContent: "space-between",
 		marginBottom: Spacing.xl,
 	},
-	backBtn: { padding: Spacing.xs, minHeight: 44, justifyContent: "center" },
-	backText: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: "600" },
-	title: {
-		fontSize: FontSize.lg,
-		fontWeight: "700",
-		color: Colors.textPrimary,
-	},
-
-	// Hero
-	heroIcon: {
-		width: 72,
-		height: 72,
-		borderRadius: 22,
-		backgroundColor: Colors.bgCard,
-		borderWidth: 1,
-		borderColor: Colors.primaryBorder,
-		alignSelf: "center",
-		alignItems: "center",
+	backBtn: {
+		padding: Spacing.xs,
+		minHeight: Sizing.touchTarget,
 		justifyContent: "center",
-		marginBottom: Spacing.lg,
 	},
-	heroEmoji: { fontSize: 36 },
-	formTitle: {
-		fontSize: FontSize.xl,
-		fontWeight: "700",
-		color: Colors.textPrimary,
-		textAlign: "center",
-		marginBottom: Spacing.xs,
-	},
-	formSub: {
+	backText: {
 		fontSize: FontSize.sm,
-		color: Colors.textMuted,
-		textAlign: "center",
-		lineHeight: 20,
-		marginBottom: Spacing.xl,
+		color: Colors.textPrimary,
+		fontWeight: FontWeight.medium,
 	},
 
-	// Input
+	title: {
+		fontSize: FontSize.xxl,
+		fontWeight: FontWeight.light,
+		color: Colors.textPrimary,
+		marginBottom: Spacing.sm,
+		letterSpacing: -0.5,
+	},
+	sub: {
+		fontSize: FontSize.md,
+		color: Colors.textMuted,
+		lineHeight: 22,
+		marginBottom: Spacing.xl,
+		fontWeight: FontWeight.regular,
+	},
+
 	label: {
 		fontSize: FontSize.xs,
+		fontWeight: FontWeight.semibold,
 		color: Colors.textMuted,
-		marginBottom: Spacing.xs,
 		textTransform: "uppercase",
-		letterSpacing: 1,
+		letterSpacing: 1.4,
+		marginBottom: Spacing.sm,
 	},
-	codeInput: {
+	codeInputWrap: {
 		backgroundColor: Colors.bgCard,
-		borderWidth: 1,
-		borderColor: Colors.primary,
-		borderRadius: Radius.md,
+		borderRadius: Radius.lg,
 		paddingVertical: Spacing.lg,
 		paddingHorizontal: Spacing.md,
+		minHeight: 80,
+		justifyContent: "center",
+	},
+	codeInput: {
+		backgroundColor: "transparent",
+		fontFamily: Mono,
 		fontSize: 32,
-		fontWeight: "700",
-		color: Colors.primary,
+		fontWeight: FontWeight.semibold,
+		color: Colors.textPrimary,
 		letterSpacing: 8,
 		textAlign: "center",
-		minHeight: 64,
 	},
-	inputError: { borderColor: Colors.danger },
+	inputError: { color: Colors.danger },
 	charCount: {
 		fontSize: FontSize.xs,
 		color: Colors.textMuted,
 		textAlign: "right",
-		marginTop: Spacing.xs,
+		marginTop: 6,
 		marginBottom: Spacing.md,
+		fontWeight: FontWeight.regular,
 	},
 	errorBox: {
-		backgroundColor: "rgba(226,75,74,0.1)",
-		borderRadius: Radius.sm,
-		borderWidth: 1,
-		borderColor: Colors.danger,
+		backgroundColor: "rgba(220,38,38,0.08)",
+		borderRadius: Radius.lg,
 		padding: Spacing.md,
 		marginBottom: Spacing.md,
 	},
-	errorText: { fontSize: FontSize.sm, color: Colors.danger },
+	errorText: {
+		fontSize: FontSize.sm,
+		color: Colors.danger,
+		fontWeight: FontWeight.medium,
+	},
 
-	// Buttons
-	joinBtn: { minHeight: 48, marginTop: Spacing.sm },
-	scanBtn: { minHeight: 48 },
+	joinBtn: { marginTop: Spacing.sm },
 
-	// Divider
 	dividerRow: {
 		flexDirection: "row",
 		alignItems: "center",
 		marginVertical: Spacing.xl,
 	},
-	dividerLine: {
-		flex: 1,
-		height: 1,
-		backgroundColor: Colors.borderSubtle,
-	},
+	dividerLine: { flex: 1, height: 1, backgroundColor: Colors.borderSubtle },
 	dividerText: {
 		marginHorizontal: Spacing.md,
 		color: Colors.textMuted,
-		fontSize: FontSize.xs,
-		fontWeight: "700",
-		letterSpacing: 2,
+		fontSize: FontSize.sm,
+		fontWeight: FontWeight.medium,
 	},
 
-	// Scanner
 	scannerRoot: { flex: 1, backgroundColor: "#000" },
 	scannerFallback: {
 		...StyleSheet.absoluteFillObject,
 		alignItems: "center",
 		justifyContent: "center",
 	},
-	scannerFallbackText: { color: Colors.textPrimary, fontSize: FontSize.md },
+	scannerFallbackText: { color: "#fff", fontSize: FontSize.md },
 	overlayTop: {
 		position: "absolute",
 		top: 0,
 		left: 0,
 		right: 0,
-		height: `${Platform.OS === "ios" ? 22 : 20}%`,
-		backgroundColor: Colors.overlay,
+		height: "22%",
+		backgroundColor: "rgba(0,0,0,0.7)",
 	},
 	overlayMiddle: {
 		position: "absolute",
-		top: `${Platform.OS === "ios" ? 22 : 20}%`,
+		top: "22%",
 		left: 0,
 		right: 0,
 		height: FRAME_SIZE,
 		flexDirection: "row",
 	},
-	overlaySide: { flex: 1, backgroundColor: Colors.overlay },
+	overlaySide: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)" },
 	scanFrame: {
 		width: FRAME_SIZE,
 		height: FRAME_SIZE,
@@ -403,7 +398,7 @@ const styles = StyleSheet.create({
 		position: "absolute",
 		width: CORNER_SIZE,
 		height: CORNER_SIZE,
-		borderColor: Colors.primary,
+		borderColor: "#fff",
 	},
 	cornerTL: {
 		top: 0,
@@ -438,17 +433,17 @@ const styles = StyleSheet.create({
 		left: 0,
 		right: 0,
 		bottom: 0,
-		top: `${Platform.OS === "ios" ? 22 : 20}%`,
+		top: "22%",
 		marginTop: FRAME_SIZE,
-		backgroundColor: Colors.overlay,
+		backgroundColor: "rgba(0,0,0,0.7)",
 		alignItems: "center",
 		paddingTop: Spacing.xl,
 		paddingBottom: Spacing.xxl,
 	},
 	scanLabel: {
-		color: Colors.textPrimary,
+		color: "#fff",
 		fontSize: FontSize.lg,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 		marginBottom: Spacing.xl,
 	},
 	cancelBtn: {
@@ -456,15 +451,14 @@ const styles = StyleSheet.create({
 		minWidth: 160,
 		paddingHorizontal: Spacing.xl,
 		paddingVertical: Spacing.md,
-		borderRadius: Radius.md,
-		borderWidth: 1,
-		borderColor: Colors.borderSubtle,
+		borderRadius: Radius.full,
+		backgroundColor: "#fff",
 		alignItems: "center",
 		justifyContent: "center",
 	},
 	cancelText: {
 		color: Colors.textPrimary,
 		fontSize: FontSize.md,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 	},
 });

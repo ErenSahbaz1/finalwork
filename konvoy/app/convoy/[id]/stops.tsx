@@ -20,7 +20,7 @@ import * as Location from "expo-location";
 import { supabase } from "../../../src/lib/supabase";
 import { Button } from "../../../src/components/Button";
 import { Card } from "../../../src/components/Card";
-import { Colors, Spacing, FontSize, Radius } from "../../../src/constants/theme";
+import { Colors, Spacing, FontSize, FontWeight, Radius, Shadow } from "../../../src/constants/theme";
 import type {
 	Stop,
 	StopType,
@@ -28,9 +28,7 @@ import type {
 	VoteReaction,
 	MemberRole,
 } from "../../../src/types";
-
-// TODO: Replace with real user ID from auth
-const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
+import { useUserStore } from "../../../src/store/userStore";
 
 const STOP_ICON: Record<StopType, string> = {
 	fuel: "⛽",
@@ -58,10 +56,17 @@ const STATUS_LABEL: Record<StopStatus, string> = {
 };
 
 const STATUS_COLOR: Record<StopStatus, string> = {
-	proposed: "#888",
+	proposed: Colors.bgElevated,
 	confirmed: Colors.primary,
-	passed: "#444",
+	passed: Colors.border,
 	cancelled: Colors.danger,
+};
+
+const STATUS_TEXT_ON_DARK: Record<StopStatus, boolean> = {
+	proposed: false,
+	confirmed: true,
+	passed: false,
+	cancelled: true,
 };
 
 const DURATION_OPTIONS = [
@@ -106,6 +111,7 @@ interface ArrivalRow {
 export default function StopsScreen() {
 	const router = useRouter();
 	const { id } = useLocalSearchParams<{ id: string }>();
+	const userId = useUserStore((s) => s.userId);
 
 	const [stops, setStops] = useState<Stop[]>([]);
 	const [members, setMembers] = useState<MemberLite[]>([]);
@@ -117,7 +123,7 @@ export default function StopsScreen() {
 	const [proposeOpen, setProposeOpen] = useState(false);
 
 	const myMember = useMemo(
-		() => members.find((m) => m.user_id === TEST_USER_ID) ?? null,
+		() => members.find((m) => m.user_id === userId) ?? null,
 		[members],
 	);
 	const isLeader = myMember?.role === "leader";
@@ -203,7 +209,7 @@ export default function StopsScreen() {
 		})();
 
 		const channel = supabase
-			.channel(`stops:${id}`)
+			.channel(`stops:${id}:${Math.random().toString(36).slice(2)}`)
 			.on(
 				"postgres_changes",
 				{
@@ -495,7 +501,14 @@ export default function StopsScreen() {
 											{ backgroundColor: STATUS_COLOR[stop.status] },
 										]}
 									>
-										<Text style={styles.statusChipText}>
+										<Text
+											style={[
+												styles.statusChipText,
+												STATUS_TEXT_ON_DARK[stop.status]
+													? styles.statusChipTextOnDark
+													: styles.statusChipTextOnLight,
+											]}
+										>
 											{STATUS_LABEL[stop.status]}
 										</Text>
 									</View>
@@ -630,16 +643,17 @@ function VoteButton({
 }) {
 	const activeBg =
 		tone === "approve"
-			? Colors.primaryDim
+			? Colors.primary
 			: tone === "decline"
-				? "rgba(226,75,74,0.15)"
+				? Colors.danger
 				: Colors.bgElevated;
 	const activeBorder =
 		tone === "approve"
 			? Colors.primary
 			: tone === "decline"
 				? Colors.danger
-				: Colors.textMuted;
+				: Colors.border;
+	const activeText = tone === "neutral" ? Colors.textPrimary : "#fff";
 	return (
 		<TouchableOpacity
 			style={[
@@ -647,9 +661,11 @@ function VoteButton({
 				active && { backgroundColor: activeBg, borderColor: activeBorder },
 			]}
 			onPress={onPress}
-			activeOpacity={0.75}
+			activeOpacity={0.85}
 		>
-			<Text style={styles.voteBtnText}>{label}</Text>
+			<Text style={[styles.voteBtnText, active && { color: activeText }]}>
+				{label}
+			</Text>
 		</TouchableOpacity>
 	);
 }
@@ -847,33 +863,34 @@ const styles = StyleSheet.create({
 		paddingBottom: Spacing.lg,
 	},
 	headerBtn: { minHeight: 44, minWidth: 60, justifyContent: "center" },
-	headerBtnText: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: "600" },
-	title: {
-		fontSize: FontSize.lg,
-		fontWeight: "700",
+	headerBtnText: {
+		fontSize: FontSize.sm,
 		color: Colors.textPrimary,
+		fontWeight: FontWeight.medium,
 	},
-	addBtn: {
-		alignItems: "flex-end",
+	title: {
+		fontSize: FontSize.xxl,
+		fontWeight: FontWeight.semibold,
+		color: Colors.textPrimary,
+		letterSpacing: -0.5,
 	},
+	addBtn: { alignItems: "flex-end" },
 	addBtnText: {
 		fontSize: 28,
-		color: Colors.primary,
-		fontWeight: "700",
-		lineHeight: 32,
+		color: Colors.textPrimary,
+		fontWeight: FontWeight.regular,
+		lineHeight: 30,
 	},
 
 	// Error box (page-level)
 	errorBox: {
-		backgroundColor: "rgba(226,75,74,0.1)",
-		borderRadius: Radius.sm,
-		borderWidth: 1,
-		borderColor: Colors.danger,
+		backgroundColor: "rgba(220,38,38,0.08)",
+		borderRadius: Radius.md,
 		padding: Spacing.md,
 		marginHorizontal: Spacing.xl,
 		marginBottom: Spacing.md,
 	},
-	errorText: { fontSize: FontSize.sm, color: Colors.danger },
+	errorText: { fontSize: FontSize.sm, color: Colors.danger, fontWeight: FontWeight.medium },
 
 	// Empty
 	empty: {
@@ -882,20 +899,22 @@ const styles = StyleSheet.create({
 		justifyContent: "center",
 		padding: Spacing.xl,
 	},
-	emptyEmoji: { fontSize: 48, marginBottom: Spacing.md },
+	emptyEmoji: { fontSize: 40, marginBottom: Spacing.md, opacity: 0.4 },
 	emptyTitle: {
 		fontSize: FontSize.xl,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 		color: Colors.textPrimary,
 		marginBottom: Spacing.sm,
+		letterSpacing: -0.3,
 	},
 	emptySub: {
-		fontSize: FontSize.sm,
+		fontSize: FontSize.md,
 		color: Colors.textMuted,
 		textAlign: "center",
-		lineHeight: 20,
+		lineHeight: 22,
 		marginBottom: Spacing.xl,
-		maxWidth: 280,
+		maxWidth: 300,
+		fontWeight: FontWeight.regular,
 	},
 	emptyBtn: { minWidth: 240, minHeight: 48 },
 
@@ -903,42 +922,43 @@ const styles = StyleSheet.create({
 	list: { padding: Spacing.xl, paddingTop: 0, gap: Spacing.md },
 
 	// Stop card
-	stopCard: { gap: Spacing.md },
+	stopCard: { gap: Spacing.md, ...Shadow.sm },
 	stopHeader: { flexDirection: "row", alignItems: "center", gap: Spacing.md },
 	iconBox: {
 		width: 44,
 		height: 44,
-		borderRadius: Radius.md,
-		backgroundColor: Colors.primaryDim,
+		borderRadius: 12,
+		backgroundColor: Colors.bgElevated,
 		alignItems: "center",
 		justifyContent: "center",
 	},
-	iconText: { fontSize: 22 },
+	iconText: { fontSize: 20 },
 	stopName: {
 		fontSize: FontSize.lg,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 		color: Colors.textPrimary,
+		letterSpacing: -0.2,
 	},
 	stopMeta: {
-		fontSize: FontSize.xs,
+		fontSize: FontSize.sm,
 		color: Colors.textMuted,
-		marginTop: 2,
+		marginTop: 4,
+		fontWeight: FontWeight.regular,
 	},
 	statusChip: {
-		paddingHorizontal: Spacing.sm,
-		paddingVertical: 4,
-		borderRadius: Radius.full,
-		minHeight: 24,
+		paddingHorizontal: 10,
+		paddingVertical: 5,
+		borderRadius: 8,
 		alignItems: "center",
 		justifyContent: "center",
 	},
 	statusChipText: {
-		color: "#fff",
 		fontSize: FontSize.xs,
-		fontWeight: "700",
-		letterSpacing: 0.5,
-		textTransform: "uppercase",
+		fontWeight: FontWeight.semibold,
+		letterSpacing: 0.3,
 	},
+	statusChipTextOnDark: { color: "#fff" },
+	statusChipTextOnLight: { color: Colors.textSecondary },
 
 	// Summary
 	summaryRow: {
@@ -950,33 +970,48 @@ const styles = StyleSheet.create({
 	summaryStrong: {
 		fontSize: FontSize.sm,
 		color: Colors.textPrimary,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 	},
-	summaryMuted: { fontSize: FontSize.xs, color: Colors.textMuted },
+	summaryMuted: {
+		fontSize: FontSize.sm,
+		color: Colors.textMuted,
+		fontWeight: FontWeight.regular,
+	},
 
 	// Arrival dots
 	dotsRow: { flexDirection: "row", alignItems: "center", gap: 4, flexWrap: "wrap" },
-	arrivalDot: { width: 10, height: 10, borderRadius: 5 },
-	dotsExtra: { fontSize: FontSize.xs, color: Colors.textMuted, marginLeft: 4 },
+	arrivalDot: {
+		width: 10,
+		height: 10,
+		borderRadius: 5,
+		borderWidth: 1,
+		borderColor: "#fff",
+	},
+	dotsExtra: {
+		fontSize: FontSize.xs,
+		color: Colors.textMuted,
+		marginLeft: 4,
+		fontWeight: FontWeight.medium,
+	},
 
 	// Vote row
 	voteRow: { flexDirection: "row", gap: Spacing.sm },
 	voteBtn: {
 		flex: 1,
-		paddingVertical: Spacing.sm,
+		paddingVertical: Spacing.md,
 		paddingHorizontal: Spacing.sm,
-		borderRadius: Radius.md,
+		borderRadius: 12,
 		borderWidth: 1,
-		borderColor: Colors.borderSubtle,
-		backgroundColor: Colors.bgElevated,
+		borderColor: Colors.border,
+		backgroundColor: Colors.bgCard,
 		alignItems: "center",
 		justifyContent: "center",
 		minHeight: 44,
 	},
 	voteBtnText: {
 		color: Colors.textPrimary,
-		fontSize: FontSize.xs,
-		fontWeight: "700",
+		fontSize: FontSize.sm,
+		fontWeight: FontWeight.semibold,
 	},
 	leaderRow: { flexDirection: "row" },
 	confirmedRow: { flexDirection: "row" },
@@ -985,23 +1020,22 @@ const styles = StyleSheet.create({
 	modalRoot: { flex: 1, justifyContent: "flex-end" },
 	modalBackdrop: {
 		...StyleSheet.absoluteFillObject,
-		backgroundColor: "rgba(0,0,0,0.6)",
+		backgroundColor: "rgba(0,0,0,0.4)",
 	},
 	sheet: {
-		backgroundColor: Colors.bg,
-		borderTopLeftRadius: Radius.xl,
-		borderTopRightRadius: Radius.xl,
-		borderWidth: 1,
-		borderColor: Colors.borderSubtle,
+		backgroundColor: Colors.bgCard,
+		borderTopLeftRadius: 24,
+		borderTopRightRadius: 24,
 		maxHeight: "90%",
+		...Shadow.lg,
 	},
 	sheetHandle: {
 		alignSelf: "center",
 		width: 40,
 		height: 4,
 		borderRadius: 2,
-		backgroundColor: Colors.textMuted,
-		marginTop: Spacing.sm,
+		backgroundColor: Colors.border,
+		marginTop: Spacing.md,
 		marginBottom: Spacing.sm,
 	},
 	sheetHeader: {
@@ -1013,13 +1047,14 @@ const styles = StyleSheet.create({
 	},
 	sheetTitle: {
 		fontSize: FontSize.xl,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 		color: Colors.textPrimary,
+		letterSpacing: -0.3,
 	},
 	sheetClose: {
 		color: Colors.textMuted,
 		fontSize: 22,
-		fontWeight: "700",
+		fontWeight: FontWeight.regular,
 		padding: 4,
 	},
 	sheetContent: { padding: Spacing.xl, paddingTop: 0, paddingBottom: Spacing.xxl },
@@ -1027,21 +1062,23 @@ const styles = StyleSheet.create({
 	// Form fields
 	label: {
 		fontSize: FontSize.xs,
+		fontWeight: FontWeight.semibold,
 		color: Colors.textMuted,
 		textTransform: "uppercase",
-		letterSpacing: 1,
+		letterSpacing: 0.8,
 		marginBottom: Spacing.sm,
-		marginTop: Spacing.md,
+		marginTop: Spacing.lg,
 	},
 	input: {
 		backgroundColor: Colors.bgCard,
 		borderWidth: 1,
-		borderColor: Colors.primaryBorder,
+		borderColor: Colors.border,
 		borderRadius: Radius.md,
-		padding: Spacing.md,
+		paddingHorizontal: Spacing.lg,
+		paddingVertical: Spacing.md,
 		fontSize: FontSize.md,
 		color: Colors.textPrimary,
-		fontWeight: "600",
+		fontWeight: FontWeight.regular,
 		minHeight: 48,
 	},
 	noteInput: { minHeight: 80, textAlignVertical: "top" },
@@ -1051,6 +1088,7 @@ const styles = StyleSheet.create({
 		color: Colors.textMuted,
 		textAlign: "right",
 		marginTop: 4,
+		fontWeight: FontWeight.regular,
 	},
 	chipsRow: {
 		flexDirection: "row",
@@ -1063,47 +1101,47 @@ const styles = StyleSheet.create({
 		flexDirection: "row",
 		alignItems: "center",
 		gap: 6,
-		paddingHorizontal: Spacing.md,
+		paddingHorizontal: Spacing.lg,
 		paddingVertical: Spacing.sm,
 		borderRadius: Radius.full,
 		borderWidth: 1,
-		borderColor: Colors.borderSubtle,
+		borderColor: Colors.border,
 		backgroundColor: Colors.bgCard,
 		minHeight: 44,
 	},
 	typeChipActive: {
-		backgroundColor: Colors.primaryDim,
+		backgroundColor: Colors.primary,
 		borderColor: Colors.primary,
 	},
 	typeChipIcon: { fontSize: 16 },
 	typeChipLabel: {
-		color: Colors.textMuted,
+		color: Colors.textSecondary,
 		fontSize: FontSize.sm,
-		fontWeight: "700",
+		fontWeight: FontWeight.medium,
 	},
-	typeChipLabelActive: { color: Colors.textPrimary },
+	typeChipLabelActive: { color: "#fff", fontWeight: FontWeight.semibold },
 
 	// Duration chip
 	durationChip: {
-		paddingHorizontal: Spacing.md,
+		paddingHorizontal: Spacing.lg,
 		paddingVertical: Spacing.sm,
 		borderRadius: Radius.full,
 		borderWidth: 1,
-		borderColor: Colors.borderSubtle,
+		borderColor: Colors.border,
 		backgroundColor: Colors.bgCard,
 		minHeight: 44,
 		justifyContent: "center",
 	},
 	durationChipActive: {
-		backgroundColor: Colors.primaryDim,
+		backgroundColor: Colors.primary,
 		borderColor: Colors.primary,
 	},
 	durationChipText: {
-		color: Colors.textMuted,
+		color: Colors.textSecondary,
 		fontSize: FontSize.sm,
-		fontWeight: "700",
+		fontWeight: FontWeight.medium,
 	},
-	durationChipTextActive: { color: Colors.textPrimary },
+	durationChipTextActive: { color: "#fff", fontWeight: FontWeight.semibold },
 
 	submitBtn: { marginTop: Spacing.xl, minHeight: 52 },
 });

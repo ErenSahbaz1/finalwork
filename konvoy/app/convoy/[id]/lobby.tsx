@@ -12,18 +12,27 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "../../../src/lib/supabase";
 import { Button } from "../../../src/components/Button";
-import { Card } from "../../../src/components/Card";
+import { FadeInView } from "../../../src/components/FadeInView";
+import { NeumorphicView } from "../../../src/components/NeumorphicView";
+import { SoftBackground } from "../../../src/components/SoftBackground";
+import { StaggeredFadeIn } from "../../../src/components/StaggeredFadeIn";
 import { VehicleDot } from "../../../src/components/VehicleDot";
-import { Colors, Spacing, FontSize, Radius } from "../../../src/constants/theme";
+import {
+	Colors,
+	Spacing,
+	FontSize,
+	FontWeight,
+	Radius,
+	Sizing,
+	Mono,
+} from "../../../src/constants/theme";
 import type {
 	Convoy,
 	ConvoyStatus,
 	MemberRole,
 	MemberStatus,
 } from "../../../src/types";
-
-// TODO: Replace with real user ID from auth
-const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
+import { useUserStore } from "../../../src/store/userStore";
 
 interface MemberRow {
 	id: string;
@@ -58,6 +67,7 @@ const ROLE_ORDER: Record<MemberRole, number> = {
 export default function ConvoyLobbyScreen() {
 	const router = useRouter();
 	const { id } = useLocalSearchParams<{ id: string }>();
+	const userId = useUserStore((s) => s.userId);
 
 	const [convoy, setConvoy] = useState<Convoy | null>(null);
 	const [members, setMembers] = useState<MemberRow[]>([]);
@@ -116,7 +126,7 @@ export default function ConvoyLobbyScreen() {
 		load();
 
 		const channel = supabase
-			.channel(`convoy-members:${id}`)
+			.channel(`convoy-members:${id}:${Math.random().toString(36).slice(2)}`)
 			.on(
 				"postgres_changes",
 				{
@@ -162,15 +172,15 @@ export default function ConvoyLobbyScreen() {
 	);
 
 	const currentMember = useMemo(
-		() => members.find((m) => m.user_id === TEST_USER_ID) ?? null,
-		[members],
+		() => members.find((m) => m.user_id === userId) ?? null,
+		[members, userId],
 	);
 	const isLeader = currentMember?.role === "leader";
 
 	async function handleShare() {
 		if (!convoy) return;
 		await Share.share({
-			message: `Join my Konvoy! 🚗\nUse code: ${convoy.invite_code}\nOr open the app and enter the code manually.`,
+			message: `Join my Konvoy. Use code: ${convoy.invite_code}`,
 		});
 	}
 
@@ -195,9 +205,9 @@ export default function ConvoyLobbyScreen() {
 	if (loading) {
 		return (
 			<SafeAreaView style={styles.safe}>
+				<SoftBackground />
 				<View style={styles.center}>
 					<ActivityIndicator color={Colors.primary} size="large" />
-					<Text style={styles.loadingText}>Loading convoy…</Text>
 				</View>
 			</SafeAreaView>
 		);
@@ -206,15 +216,15 @@ export default function ConvoyLobbyScreen() {
 	if (error && !convoy) {
 		return (
 			<SafeAreaView style={styles.safe}>
+				<SoftBackground />
 				<View style={styles.header}>
 					<TouchableOpacity
 						onPress={() => router.back()}
 						style={styles.backBtn}
 						hitSlop={12}
 					>
-						<Text style={styles.backText}>← Back</Text>
+						<Text style={styles.backText}>Back</Text>
 					</TouchableOpacity>
-					<View style={{ width: 60 }} />
 					<View style={{ width: 60 }} />
 				</View>
 				<View style={styles.center}>
@@ -227,296 +237,322 @@ export default function ConvoyLobbyScreen() {
 
 	if (!convoy) return null;
 
-	const statusChipStyle = [
-		styles.statusChip,
-		convoy.status === "preparation" && styles.statusPreparation,
-		convoy.status === "driving" && styles.statusDriving,
-		convoy.status === "paused" && styles.statusPaused,
-		convoy.status === "ended" && styles.statusEnded,
-	];
-
 	return (
 		<SafeAreaView style={styles.safe}>
-			<ScrollView contentContainerStyle={styles.container}>
-				{/* Header */}
-				<View style={styles.header}>
-					<TouchableOpacity
-						onPress={() => router.back()}
-						style={styles.backBtn}
-						hitSlop={12}
-					>
-						<Text style={styles.backText}>← Back</Text>
-					</TouchableOpacity>
-					<Text style={styles.title} numberOfLines={1}>
+			<SoftBackground />
+			<FadeInView style={styles.flex}>
+				<ScrollView contentContainerStyle={styles.container}>
+					<View style={styles.header}>
+						<TouchableOpacity
+							onPress={() => router.back()}
+							style={styles.backBtn}
+							hitSlop={12}
+						>
+							<Text style={styles.backText}>Back</Text>
+						</TouchableOpacity>
+						<NeumorphicView
+							pressed
+							style={[
+								styles.statusChip,
+								convoy.status === "preparation" && styles.statusPreparation,
+								convoy.status === "driving" && styles.statusDriving,
+								convoy.status === "paused" && styles.statusPaused,
+								convoy.status === "ended" && styles.statusEnded,
+							]}
+						>
+							<Text
+								style={[
+									styles.statusChipText,
+									(convoy.status === "driving" ||
+										convoy.status === "ended") &&
+										styles.statusChipTextOnDark,
+								]}
+							>
+								{STATUS_LABEL[convoy.status]}
+							</Text>
+						</NeumorphicView>
+					</View>
+
+					<Text style={styles.title} numberOfLines={2}>
 						{convoy.title}
 					</Text>
-					<View style={statusChipStyle}>
-						<Text style={styles.statusChipText}>
-							{STATUS_LABEL[convoy.status]}
-						</Text>
-					</View>
-				</View>
 
-				{/* Invite section */}
-				<Card accent style={styles.inviteCard}>
-					<Text style={styles.inviteLabel}>Invite code</Text>
-					<Text style={styles.inviteCode}>{convoy.invite_code}</Text>
-					<Text style={styles.inviteExpiry}>Expires in 48h</Text>
-					<Button
-						label="📤  Share code"
-						onPress={handleShare}
-						style={styles.shareBtn}
-					/>
-				</Card>
+					<NeumorphicView style={styles.inviteCard}>
+						<Text style={styles.inviteLabel}>Invite code</Text>
+						<Text style={styles.inviteCode}>{convoy.invite_code}</Text>
+						<Text style={styles.inviteExpiry}>Expires in 48h</Text>
+						<Button
+							label="Share code"
+							onPress={handleShare}
+							variant="ghost"
+							style={styles.shareBtn}
+						/>
+					</NeumorphicView>
 
-				{/* Members */}
-				<View style={styles.membersHeader}>
-					<Text style={styles.membersTitle}>
+					<Text style={styles.sectionTitle}>
 						Members ({members.length})
 					</Text>
-				</View>
 
-				<View style={styles.membersList}>
-					{sortedMembers.map((m) => {
-						const isMe = m.user_id === TEST_USER_ID;
-						return (
-							<View
-								key={m.id}
-								style={[styles.memberRow, isMe && styles.memberRowMe]}
-							>
-								<VehicleDot
-									color={m.avatar_color}
-									label={m.display_name}
-									size={40}
-									isLeader={m.role === "leader"}
-									isWeak={m.status === "weak_signal"}
-								/>
-								<View style={styles.memberInfo}>
-									<Text style={styles.memberName} numberOfLines={1}>
-										{m.display_name}
-										{isMe ? "  (you)" : ""}
-									</Text>
-									<View style={styles.memberMeta}>
-										<View
-											style={[
-												styles.roleChip,
-												m.role === "leader" && styles.roleLeader,
-												m.role === "co_leader" && styles.roleCoLeader,
-												m.role === "member" && styles.roleMember,
-											]}
-										>
-											<Text style={styles.roleChipText}>
-												{ROLE_LABEL[m.role]}
+					<View style={styles.membersList}>
+						{sortedMembers.map((m, idx) => {
+							const isMe = m.user_id === userId;
+							return (
+								<StaggeredFadeIn key={m.id} index={idx}>
+									<NeumorphicView
+										style={[styles.memberRow, isMe && styles.memberRowMe]}
+									>
+										<VehicleDot
+											color={m.avatar_color}
+											label={m.display_name}
+											size={40}
+											isLeader={m.role === "leader"}
+											isWeak={m.status === "weak_signal"}
+										/>
+										<View style={styles.memberInfo}>
+											<Text style={styles.memberName} numberOfLines={1}>
+												{m.display_name}
+												{isMe ? "  (you)" : ""}
 											</Text>
+											<View style={styles.memberMeta}>
+												<NeumorphicView
+													pressed
+													style={[
+														styles.roleChip,
+														m.role === "leader" && styles.roleLeader,
+														m.role === "co_leader" && styles.roleCoLeader,
+														m.role === "member" && styles.roleMember,
+													]}
+												>
+													<Text
+														style={[
+															styles.roleChipText,
+															(m.role === "leader" ||
+																m.role === "co_leader") &&
+																styles.roleChipTextOnDark,
+														]}
+													>
+														{ROLE_LABEL[m.role]}
+													</Text>
+												</NeumorphicView>
+												<View style={styles.statusDotWrap}>
+													<View
+														style={[
+															styles.statusDot,
+															m.status === "online" && styles.statusDotOnline,
+															m.status === "offline" && styles.statusDotOffline,
+															m.status === "weak_signal" &&
+																styles.statusDotWeak,
+														]}
+													/>
+													<Text style={styles.statusDotLabel}>
+														{m.status === "online"
+															? "Online"
+															: m.status === "weak_signal"
+																? "Weak signal"
+																: "Offline"}
+													</Text>
+												</View>
+											</View>
 										</View>
-										<View style={styles.statusDotWrap}>
-											<View
-												style={[
-													styles.statusDot,
-													m.status === "online" && styles.statusDotOnline,
-													m.status === "offline" && styles.statusDotOffline,
-													m.status === "weak_signal" &&
-														styles.statusDotWeak,
-												]}
-											/>
-											<Text style={styles.statusDotLabel}>
-												{m.status === "online"
-													? "Online"
-													: m.status === "weak_signal"
-														? "Weak signal"
-														: "Offline"}
-											</Text>
-										</View>
-									</View>
-								</View>
-							</View>
-						);
-					})}
-				</View>
+									</NeumorphicView>
+								</StaggeredFadeIn>
+							);
+						})}
+					</View>
 
-				{error ? (
-					<View style={styles.errorBox}>
-						<Text style={styles.errorBoxText}>⚠️ {error}</Text>
+					{error ? (
+						<NeumorphicView style={styles.errorBox}>
+							<Text style={styles.errorBoxText}>{error}</Text>
+						</NeumorphicView>
+					) : null}
+				</ScrollView>
+
+				{isLeader && convoy.status === "preparation" ? (
+					<View style={styles.footer}>
+						<Button
+							label="Start convoy"
+							onPress={handleStart}
+							loading={starting}
+							disabled={members.length === 0}
+						/>
 					</View>
 				) : null}
-			</ScrollView>
-
-			{/* Leader-only start button */}
-			{isLeader && convoy.status === "preparation" ? (
-				<View style={styles.footer}>
-					<Button
-						label="Start convoy →"
-						onPress={handleStart}
-						loading={starting}
-						disabled={members.length === 0}
-						style={styles.startBtn}
-					/>
-				</View>
-			) : null}
+			</FadeInView>
 		</SafeAreaView>
 	);
 }
 
 const styles = StyleSheet.create({
 	safe: { flex: 1, backgroundColor: Colors.bg },
-	container: { padding: Spacing.xl, paddingBottom: Spacing.xxl * 3 },
-	center: { flex: 1, alignItems: "center", justifyContent: "center", padding: Spacing.xl },
-	loadingText: {
-		color: Colors.textMuted,
-		marginTop: Spacing.md,
-		fontSize: FontSize.sm,
+	flex: { flex: 1 },
+	container: { padding: Spacing.xl, paddingBottom: 140 },
+	center: {
+		flex: 1,
+		alignItems: "center",
+		justifyContent: "center",
+		padding: Spacing.xl,
 	},
 	errorTitle: {
 		color: Colors.textPrimary,
 		fontSize: FontSize.lg,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 		marginBottom: Spacing.sm,
 	},
 	errorText: {
 		color: Colors.textMuted,
 		fontSize: FontSize.sm,
 		textAlign: "center",
+		fontWeight: FontWeight.regular,
 	},
 
-	// Header
 	header: {
 		flexDirection: "row",
 		alignItems: "center",
 		justifyContent: "space-between",
 		marginBottom: Spacing.xl,
 	},
-	backBtn: { padding: Spacing.xs, minHeight: 44, justifyContent: "center", minWidth: 60 },
-	backText: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: "600" },
-	title: {
-		flex: 1,
-		fontSize: FontSize.lg,
-		fontWeight: "700",
+	backBtn: {
+		padding: Spacing.xs,
+		minHeight: Sizing.touchTarget,
+		justifyContent: "center",
+	},
+	backText: {
+		fontSize: FontSize.sm,
 		color: Colors.textPrimary,
-		textAlign: "center",
-		marginHorizontal: Spacing.sm,
+		fontWeight: FontWeight.medium,
+	},
+	title: {
+		fontSize: FontSize.xxl,
+		fontWeight: FontWeight.light,
+		color: Colors.textPrimary,
+		letterSpacing: -0.5,
+		marginBottom: Spacing.xl,
 	},
 
-	// Status chip
 	statusChip: {
 		paddingHorizontal: Spacing.md,
 		paddingVertical: 6,
 		borderRadius: Radius.full,
-		minHeight: 28,
-		alignItems: "center",
-		justifyContent: "center",
 	},
 	statusChipText: {
-		color: "#fff",
 		fontSize: FontSize.xs,
-		fontWeight: "700",
-		letterSpacing: 0.5,
-		textTransform: "uppercase",
+		fontWeight: FontWeight.semibold,
+		letterSpacing: 0.6,
+		color: Colors.textSecondary,
 	},
+	statusChipTextOnDark: { color: Colors.bgElevated },
 	statusPreparation: { backgroundColor: Colors.bgElevated },
 	statusDriving: { backgroundColor: Colors.primary },
-	statusPaused: { backgroundColor: Colors.warning },
+	statusPaused: { backgroundColor: Colors.primaryDim },
 	statusEnded: { backgroundColor: Colors.danger },
 
-	// Invite
-	inviteCard: { alignItems: "center", marginBottom: Spacing.xl },
+	inviteCard: {
+		alignItems: "center",
+		backgroundColor: Colors.bgCard,
+		borderRadius: Radius.xl,
+		padding: Spacing.xl,
+		marginBottom: Spacing.xl,
+	},
 	inviteLabel: {
 		fontSize: FontSize.xs,
+		fontWeight: FontWeight.semibold,
 		color: Colors.textMuted,
 		textTransform: "uppercase",
-		letterSpacing: 1,
+		letterSpacing: 1.4,
 		marginBottom: Spacing.sm,
 	},
 	inviteCode: {
+		fontFamily: Mono,
 		fontSize: 38,
-		fontWeight: "700",
-		color: Colors.primary,
-		letterSpacing: 8,
+		fontWeight: FontWeight.semibold,
+		color: Colors.textPrimary,
+		letterSpacing: 6,
 	},
 	inviteExpiry: {
-		fontSize: FontSize.xs,
+		fontSize: FontSize.sm,
 		color: Colors.textMuted,
 		marginTop: Spacing.xs,
+		marginBottom: Spacing.lg,
+		fontWeight: FontWeight.regular,
+	},
+	shareBtn: { alignSelf: "stretch" },
+
+	sectionTitle: {
+		fontSize: FontSize.xs,
+		fontWeight: FontWeight.semibold,
+		color: Colors.textMuted,
+		textTransform: "uppercase",
+		letterSpacing: 1.4,
 		marginBottom: Spacing.md,
 	},
-	shareBtn: { alignSelf: "stretch", backgroundColor: Colors.bgElevated, minHeight: 44 },
 
-	// Members
-	membersHeader: { marginBottom: Spacing.md },
-	membersTitle: {
-		fontSize: FontSize.lg,
-		fontWeight: "700",
-		color: Colors.textPrimary,
-	},
-	membersList: { gap: Spacing.sm },
+	membersList: { gap: Spacing.md },
 	memberRow: {
 		flexDirection: "row",
 		alignItems: "center",
 		backgroundColor: Colors.bgCard,
-		borderRadius: Radius.md,
-		borderWidth: 1,
-		borderColor: Colors.borderSubtle,
-		padding: Spacing.md,
-		minHeight: 64,
+		borderRadius: Radius.lg,
+		padding: Spacing.lg,
+		minHeight: 72,
+		gap: Spacing.md,
 	},
 	memberRowMe: {
-		borderColor: Colors.primaryBorder,
-		backgroundColor: Colors.primaryDim,
+		backgroundColor: Colors.bgElevated,
 	},
-	memberInfo: { flex: 1, marginLeft: Spacing.md },
+	memberInfo: { flex: 1 },
 	memberName: {
 		fontSize: FontSize.md,
-		fontWeight: "700",
+		fontWeight: FontWeight.semibold,
 		color: Colors.textPrimary,
-		marginBottom: 4,
+		marginBottom: 6,
 	},
 	memberMeta: { flexDirection: "row", alignItems: "center", gap: Spacing.sm },
 
-	// Role chip
 	roleChip: {
 		paddingHorizontal: Spacing.sm,
-		paddingVertical: 3,
-		borderRadius: Radius.sm,
+		paddingVertical: 4,
+		borderRadius: Radius.full,
 	},
 	roleChipText: {
-		color: "#fff",
 		fontSize: FontSize.xs,
-		fontWeight: "700",
-		letterSpacing: 0.5,
-		textTransform: "uppercase",
+		fontWeight: FontWeight.semibold,
+		letterSpacing: 0.6,
+		color: Colors.textSecondary,
 	},
+	roleChipTextOnDark: { color: Colors.bgElevated },
 	roleLeader: { backgroundColor: Colors.primary },
-	roleCoLeader: { backgroundColor: Colors.info },
+	roleCoLeader: { backgroundColor: Colors.primaryDim },
 	roleMember: { backgroundColor: Colors.bgElevated },
 
-	// Status dot
 	statusDotWrap: { flexDirection: "row", alignItems: "center", gap: 6 },
 	statusDot: { width: 8, height: 8, borderRadius: 4 },
-	statusDotOnline: { backgroundColor: Colors.primary },
+	statusDotOnline: { backgroundColor: Colors.online },
 	statusDotOffline: { backgroundColor: Colors.textMuted },
 	statusDotWeak: { backgroundColor: Colors.warning },
-	statusDotLabel: { fontSize: FontSize.xs, color: Colors.textMuted },
+	statusDotLabel: {
+		fontSize: FontSize.xs,
+		color: Colors.textMuted,
+		fontWeight: FontWeight.regular,
+	},
 
-	// Inline error (after load)
 	errorBox: {
-		backgroundColor: "rgba(226,75,74,0.1)",
-		borderRadius: Radius.sm,
-		borderWidth: 1,
-		borderColor: Colors.danger,
+		backgroundColor: "rgba(220,38,38,0.08)",
+		borderRadius: Radius.md,
 		padding: Spacing.md,
 		marginTop: Spacing.lg,
 	},
-	errorBoxText: { fontSize: FontSize.sm, color: Colors.danger },
+	errorBoxText: {
+		fontSize: FontSize.sm,
+		color: Colors.danger,
+		fontWeight: FontWeight.medium,
+	},
 
-	// Footer
 	footer: {
 		position: "absolute",
 		left: 0,
 		right: 0,
 		bottom: 0,
 		padding: Spacing.xl,
-		backgroundColor: Colors.bg,
-		borderTopWidth: 1,
-		borderTopColor: Colors.borderSubtle,
+		backgroundColor: Colors.overlay,
 	},
-	startBtn: { minHeight: 52 },
 });
