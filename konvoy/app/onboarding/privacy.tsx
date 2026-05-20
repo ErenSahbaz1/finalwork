@@ -24,7 +24,6 @@ import {
 interface PrivacySettings {
 	exactLocation: boolean;
 	autoWipe: boolean;
-	showLicensePlate: boolean;
 	shareVehicleProfile: boolean;
 }
 
@@ -33,7 +32,6 @@ export default function PrivacyScreen() {
 	const [settings, setSettings] = useState<PrivacySettings>({
 		exactLocation: true,
 		autoWipe: true,
-		showLicensePlate: false,
 		shareVehicleProfile: true,
 	});
 
@@ -95,7 +93,7 @@ export default function PrivacyScreen() {
 						</Text>
 					</NeumorphicView>
 
-					<Button label="Start using Konvoy" onPress={handleStart} />
+					<Button label="Start using Convoi" onPress={handleStart} />
 				</ScrollView>
 			</FadeInView>
 		</SafeAreaView>
@@ -112,11 +110,6 @@ const TOGGLES = [
 		key: "autoWipe",
 		name: "Auto-wipe on trip end",
 		desc: "Delete all data when convoy closes",
-	},
-	{
-		key: "showLicensePlate",
-		name: "Show license plate",
-		desc: "Optional — visible to your convoy",
 	},
 	{
 		key: "shareVehicleProfile",

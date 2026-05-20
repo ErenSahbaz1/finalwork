@@ -1,15 +1,29 @@
-// ─── Supabase setup ────────────────────────────────────────────────────────────
-// IMPORTANT: Anonymous auth must be enabled in the Supabase dashboard before
-// this code will work:
-//   Supabase dashboard → Authentication → Providers → Anonymous → Enable
+// ─── Supabase auth helpers ────────────────────────────────────────────────────
+// IMPORTANT — Supabase dashboard setup:
+//   • Authentication → Providers → Email: enabled (default)
+//   • Authentication → Providers → Google: enabled, with Client ID + Secret
+//     from Google Cloud Console, redirect URI:
+//       https://<project>.supabase.co/auth/v1/callback
+//   • Authentication → Providers → Anonymous: enabled (used for guests)
 //
-// TODO (post-MVP): now that we have real auth, add an RLS policy on public.users:
+// Security notes:
+//   • Passwords are never stored client-side — Supabase handles auth tokens.
+//   • Tokens persist via AsyncStorage (configured in src/lib/supabase.ts).
+//   • Google OAuth tokens are managed by Supabase, never exposed to app code.
+//   • Guest sessions use Supabase anonymous auth — zero PII stored.
+//
+// TODO (post-MVP) — Supabase RLS:
 //   create policy "users can read/write own row"
 //     on public.users for all
 //     using (auth.uid() = id);
-// ────────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────
 
+import * as WebBrowser from "expo-web-browser";
+import { makeRedirectUri } from "expo-auth-session";
+import * as QueryParams from "expo-auth-session/build/QueryParams";
 import { supabase } from "./supabase";
+
+WebBrowser.maybeCompleteAuthSession();
 
 export interface AppUser {
 	id: string;
@@ -19,12 +33,14 @@ export interface AppUser {
 }
 
 const DEFAULT_DISPLAY_NAME = "Driver";
-const DEFAULT_AVATAR_COLOR = "#33a86d";
+const DEFAULT_AVATAR_COLOR = "#1a1a1a";
+
+// ─── Anonymous / guest session ────────────────────────────────────────────────
 
 /**
- * Ensures we have an anonymous Supabase session and a matching row in
- * public.users. Safe to call on every app start — it's idempotent.
- * Returns the public.users row.
+ * Ensures we have a Supabase session (anonymous if none exists) and a matching
+ * row in public.users. Used as the legacy/guest entry point. Returns the
+ * public.users row.
  */
 export async function getOrCreateUser(): Promise<AppUser> {
 	const { data: sessionData } = await supabase.auth.getSession();
@@ -39,6 +55,14 @@ export async function getOrCreateUser(): Promise<AppUser> {
 	const userId = session?.user?.id;
 	if (!userId) throw new Error("Failed to create anonymous session.");
 
+	return await ensureUserRow(userId);
+}
+
+/** Idempotent — returns the row whether it already existed or was just made. */
+export async function ensureUserRow(
+	userId: string,
+	overrides?: Partial<Pick<AppUser, "display_name" | "avatar_color">>,
+): Promise<AppUser> {
 	const { data: existing, error: lookupErr } = await supabase
 		.from("users")
 		.select("id, display_name, avatar_color, lang")
@@ -52,8 +76,8 @@ export async function getOrCreateUser(): Promise<AppUser> {
 		.from("users")
 		.insert({
 			id: userId,
-			display_name: DEFAULT_DISPLAY_NAME,
-			avatar_color: DEFAULT_AVATAR_COLOR,
+			display_name: overrides?.display_name ?? DEFAULT_DISPLAY_NAME,
+			avatar_color: overrides?.avatar_color ?? DEFAULT_AVATAR_COLOR,
 			lang: "en",
 		})
 		.select("id, display_name, avatar_color, lang")
@@ -70,4 +94,82 @@ export async function getCurrentUserId(): Promise<string | null> {
 
 export async function signOut(): Promise<void> {
 	await supabase.auth.signOut();
+}
+
+// ─── Email auth ───────────────────────────────────────────────────────────────
+
+export async function signInWithEmail(email: string, password: string) {
+	const { data, error } = await supabase.auth.signInWithPassword({
+		email,
+		password,
+	});
+	if (error) throw error;
+	if (!data.user) throw new Error("Sign-in failed: no user returned.");
+	await ensureUserRow(data.user.id, {
+		display_name: data.user.user_metadata?.display_name as string | undefined,
+	});
+	return data.user;
+}
+
+export async function signUpWithEmail(
+	email: string,
+	password: string,
+	displayName: string,
+) {
+	const { data, error } = await supabase.auth.signUp({
+		email,
+		password,
+		options: { data: { display_name: displayName } },
+	});
+	if (error) throw error;
+	if (!data.user) throw new Error("Sign-up failed: no user returned.");
+	await ensureUserRow(data.user.id, {
+		display_name: displayName,
+	});
+	return data.user;
+}
+
+// ─── Google OAuth (PKCE via expo-auth-session) ────────────────────────────────
+
+export async function signInWithGoogle(): Promise<void> {
+	const redirectUri = makeRedirectUri({ scheme: "convoi" });
+
+	const { data, error } = await supabase.auth.signInWithOAuth({
+		provider: "google",
+		options: {
+			redirectTo: redirectUri,
+			skipBrowserRedirect: true,
+		},
+	});
+	if (error) throw error;
+	if (!data?.url) throw new Error("No OAuth URL returned from Supabase.");
+
+	const res = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
+
+	if (res.type !== "success") {
+		// User dismissed or system cancelled — not an error worth surfacing.
+		throw new Error("Google sign-in cancelled.");
+	}
+
+	const { params, errorCode } = QueryParams.getQueryParams(res.url);
+	if (errorCode) throw new Error(errorCode);
+
+	const { access_token, refresh_token } = params;
+	if (!access_token || !refresh_token) {
+		throw new Error("Missing tokens from Google OAuth callback.");
+	}
+
+	const { data: sessionData, error: sessionErr } =
+		await supabase.auth.setSession({ access_token, refresh_token });
+	if (sessionErr) throw sessionErr;
+
+	const user = sessionData.user;
+	if (user) {
+		await ensureUserRow(user.id, {
+			display_name:
+				(user.user_metadata?.full_name as string | undefined) ??
+				(user.user_metadata?.name as string | undefined) ??
+				user.email?.split("@")[0],
+		});
+	}
 }

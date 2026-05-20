@@ -95,7 +95,7 @@ export default function CreateConvoyScreen() {
 	async function handleShare() {
 		if (!createdConvoy) return;
 		await Share.share({
-			message: `Join my Konvoy. Use code: ${createdConvoy.invite_code}`,
+			message: `Join my Convoi. Use code: ${createdConvoy.invite_code}`,
 		});
 	}
 

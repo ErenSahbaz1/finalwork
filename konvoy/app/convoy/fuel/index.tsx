@@ -100,7 +100,7 @@ const COUNTRY_CENTERS: Record<
 	RS: { lat: 44.02, lng: 21.01, flag: "🇷🇸", name: "Serbia" },
 };
 
-// Typical Konvoy thesis route — BE → TR overland
+// Typical Convoi thesis route — BE → TR overland
 const DEFAULT_ROUTE: CountryCode[] = ["BE", "DE", "AT", "HU", "RO", "BG", "TR"];
 
 // Rough country->km distances along the default route (BE start)

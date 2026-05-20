@@ -45,10 +45,10 @@ import { useUserStore } from "../../src/store/userStore";
 import type { FuelType, VehicleType } from "../../src/types";
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
-const ONBOARDED_KEY = "konvoy_onboarded";
-const PRIVACY_KEY = "konvoy_privacy_settings";
-const LANGUAGE_KEY = "konvoy_language";
-const UNITS_KEY = "konvoy_units";
+const ONBOARDED_KEY = "convoi_onboarded";
+const PRIVACY_KEY = "convoi_privacy_settings";
+const LANGUAGE_KEY = "convoi_language";
+const UNITS_KEY = "convoi_units";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface PrivacySettings {
@@ -147,8 +147,32 @@ export default function SettingsScreen() {
 	const userId = useUserStore((s) => s.userId);
 	const displayName = useUserStore((s) => s.displayName);
 	const avatarColor = useUserStore((s) => s.avatarColor);
+	const email = useUserStore((s) => s.email);
+	const isAuthenticated = useUserStore((s) => s.isAuthenticated);
+	const isGuest = useUserStore((s) => s.isGuest);
 	const setUser = useUserStore((s) => s.setUser);
 	const clearUser = useUserStore((s) => s.clear);
+
+	const [signingOut, setSigningOut] = useState(false);
+
+	async function handleSignOut() {
+		setSigningOut(true);
+		try {
+			await signOut();
+			await AsyncStorage.multiRemove([
+				"convoi_onboarded",
+				"convoi_privacy_settings",
+				"convoi_language",
+				"convoi_units",
+			]);
+			clearUser();
+			router.replace("/auth");
+		} catch (e: any) {
+			Alert.alert("Couldn't sign out", e?.message ?? "Try again.");
+		} finally {
+			setSigningOut(false);
+		}
+	}
 
 	// Profile-edit modal
 	const [nameModalOpen, setNameModalOpen] = useState(false);
@@ -438,7 +462,7 @@ export default function SettingsScreen() {
 	function handleDeleteAllRequest() {
 		Alert.alert(
 			"Delete all my data?",
-			"This will delete your profile and all convoy history. You'll need to set up Konvoy again from scratch.",
+			"This will delete your profile and all convoy history. You'll need to set up Convoi again from scratch.",
 			[
 				{ text: "Cancel", style: "cancel" },
 				{
@@ -561,11 +585,68 @@ export default function SettingsScreen() {
 								<Text style={styles.profileName} numberOfLines={1}>
 									{displayName || "New Driver"}
 								</Text>
-								<Text style={styles.profileSub}>Anonymous user · Tap to edit</Text>
+								<Text style={styles.profileSub}>
+									{isAuthenticated
+										? `${email ?? "Signed in"} · Tap to edit`
+										: isGuest
+											? "Guest user · Tap to edit"
+											: "Anonymous · Tap to edit"}
+								</Text>
 							</View>
 							<Text style={styles.chevron}>›</Text>
 						</NeumorphicView>
 					</TouchableOpacity>
+
+					{/* ─── Account ─────────────────────────────────────────────── */}
+					<Section title="Account">
+						<NeumorphicView style={styles.card}>
+							{isAuthenticated ? (
+								<>
+									<View style={styles.accountRow}>
+										<Text style={styles.accountLabel}>Signed in as</Text>
+										<Text style={styles.accountValue} numberOfLines={1}>
+											{email ?? "—"}
+										</Text>
+									</View>
+									<View style={styles.divider} />
+									<TouchableOpacity
+										onPress={handleSignOut}
+										disabled={signingOut}
+										style={styles.signOutBtn}
+										activeOpacity={0.85}
+									>
+										<Text style={styles.signOutText}>
+											{signingOut ? "Signing out…" : "Sign out"}
+										</Text>
+									</TouchableOpacity>
+								</>
+							) : (
+								<>
+									<View style={styles.accountRow}>
+										<Text style={styles.accountLabel}>Status</Text>
+										<Text style={styles.accountValue}>
+											{isGuest ? "Guest user" : "Not signed in"}
+										</Text>
+									</View>
+									<View style={styles.divider} />
+									<TouchableOpacity
+										onPress={() => router.push("/auth")}
+										style={styles.signOutBtn}
+										activeOpacity={0.85}
+									>
+										<Text
+											style={[
+												styles.signOutText,
+												{ color: Colors.textPrimary },
+											]}
+										>
+											Create account / sign in
+										</Text>
+									</TouchableOpacity>
+								</>
+							)}
+						</NeumorphicView>
+					</Section>
 
 					{/* ─── Vehicle ────────────────────────────────────────────── */}
 					<Section title="My vehicle">
@@ -841,7 +922,7 @@ export default function SettingsScreen() {
 					{/* ─── About ─────────────────────────────────────────────── */}
 					<Section title="About">
 						<NeumorphicView style={styles.aboutCard}>
-							<Text style={styles.aboutTitle}>Konvoy</Text>
+							<Text style={styles.aboutTitle}>Convoi</Text>
 							<Text style={styles.aboutSub}>
 								Version {APP_VERSION} · Bachelor thesis project
 							</Text>
@@ -1086,6 +1167,34 @@ const styles = StyleSheet.create({
 		height: 1,
 		backgroundColor: Colors.borderSubtle,
 		marginVertical: Spacing.md,
+	},
+	accountRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+		gap: Spacing.md,
+	},
+	accountLabel: {
+		fontSize: FontSize.sm,
+		color: Colors.textMuted,
+		fontWeight: FontWeight.regular,
+	},
+	accountValue: {
+		flex: 1,
+		textAlign: "right",
+		fontSize: FontSize.sm,
+		color: Colors.textPrimary,
+		fontWeight: FontWeight.medium,
+	},
+	signOutBtn: {
+		minHeight: 44,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	signOutText: {
+		fontSize: FontSize.md,
+		color: Colors.danger,
+		fontWeight: FontWeight.semibold,
 	},
 	muted: {
 		fontSize: FontSize.sm,

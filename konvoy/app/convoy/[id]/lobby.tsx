@@ -180,7 +180,7 @@ export default function ConvoyLobbyScreen() {
 	async function handleShare() {
 		if (!convoy) return;
 		await Share.share({
-			message: `Join my Konvoy. Use code: ${convoy.invite_code}`,
+			message: `Join my Convoi. Use code: ${convoy.invite_code}`,
 		});
 	}
 

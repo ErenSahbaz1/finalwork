@@ -241,7 +241,7 @@ export default function HomeScreen() {
 					showsVerticalScrollIndicator={false}
 				>
 					<View style={styles.header}>
-						<Text style={styles.logo}>Konvoy</Text>
+						<Text style={styles.logo}>Convoi</Text>
 						<Pressable
 							onPress={() => router.push("/settings")}
 							hitSlop={10}

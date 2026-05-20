@@ -1,5 +1,5 @@
 // ─── Gemini API helper ────────────────────────────────────────────────────────
-// All Konvoy AI calls go through Gemini 2.5 Flash. Free tier limits
+// All Convoi AI calls go through Gemini 2.5 Flash. Free tier limits
 // (15 req/min, 1500 req/day) are plenty for a thesis project.
 //
 // Setup:
@@ -8,7 +8,7 @@
 //   3. Restart Expo with `npx expo start --clear` after editing .env
 // ──────────────────────────────────────────────────────────────────────────────
 
-// gemini-2.0-flash is deprecated and unavailable to new accounts since 2026.
+
 // gemini-2.5-flash is the current free-tier flash model. If Google deprecates
 // this one too, swap in the `gemini-flash-latest` alias.
 const GEMINI_MODEL = "gemini-2.5-flash";

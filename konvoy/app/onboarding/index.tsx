@@ -29,7 +29,7 @@ export default function WelcomeScreen() {
 				</View>
 
 				<View style={styles.hero}>
-					<Text style={styles.appName}>Konvoy</Text>
+					<Text style={styles.appName}>Convoi</Text>
 					<Text style={styles.tagline}>Drive together. Arrive together.</Text>
 				</View>
 

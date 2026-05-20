@@ -1,5 +1,5 @@
 -- ============================================================
--- KONVOY — Supabase SQL Schema
+-- CONVOI — Supabase SQL Schema
 -- Run this in your Supabase SQL editor to set up the database
 -- ============================================================
 

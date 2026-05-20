@@ -135,7 +135,7 @@ export default function PlanStep5() {
 							<View style={styles.loadingRow}>
 								<ActivityIndicator color={Colors.primary} />
 								<Text style={styles.loadingText}>
-									KonvoyAI is thinking…
+									ConvoiAI is thinking…
 								</Text>
 							</View>
 						</View>

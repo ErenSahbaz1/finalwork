@@ -238,7 +238,7 @@ export default function PlanResults() {
 						🚗
 					</Animated.Text>
 					<Text style={styles.loaderTitle}>
-						KonvoyAI is planning your route…
+						ConvoyAI is planning your route…
 					</Text>
 					<Text style={styles.loaderSub}>{LOADING_MESSAGES[messageIdx]}</Text>
 				</FadeInView>

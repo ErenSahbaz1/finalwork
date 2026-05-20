@@ -84,11 +84,41 @@ export default function ConvoyMapScreen() {
 	const [permissionDenied, setPermissionDenied] = useState(false);
 	const [now, setNow] = useState(Date.now());
 
+	// Status quick-action UI state
+	const [activeStatus, setActiveStatus] = useState<StatusEventType | null>(null);
+	const [statusCooldown, setStatusCooldown] = useState(false);
+	const [toast, setToast] = useState<{
+		message: string;
+		color: string;
+		durationMs: number;
+	} | null>(null);
+
+	const showToast = useCallback(
+		(message: string, color: string = "#1a1a1a", durationMs = 2500) => {
+			setToast({ message, color, durationMs });
+		},
+		[],
+	);
+
+	// Auto-hide toast based on its own duration
+	useEffect(() => {
+		if (!toast) return;
+		const t = setTimeout(() => setToast(null), toast.durationMs);
+		return () => clearTimeout(t);
+	}, [toast]);
+
 	// Tick to keep stale opacity fresh
 	useEffect(() => {
 		const t = setInterval(() => setNow(Date.now()), 5000);
 		return () => clearInterval(t);
 	}, []);
+
+	// Mirror of `members` for use inside long-lived Supabase subscriptions
+	// whose closures would otherwise capture a stale value.
+	const currentMembersRef = useRef<Record<string, MemberInfo>>({});
+	useEffect(() => {
+		currentMembersRef.current = members;
+	}, [members]);
 
 	// ── Initial fetch + realtime subscription ─────────────────────────────────
 	useEffect(() => {
@@ -240,6 +270,32 @@ export default function ConvoyMapScreen() {
 				},
 				() => {
 					loadConvoyAndMembers().catch(() => {});
+				},
+			)
+			.on(
+				"postgres_changes",
+				{
+					event: "INSERT",
+					schema: "public",
+					table: "status_events",
+				},
+				(payload) => {
+					const row: any = payload.new;
+					if (!row) return;
+					// Only react to other members of this convoy (current state
+					// snapshot via myMemberIdRef + the latest members map).
+					if (row.convoy_member_id === myMemberIdRef.current) return;
+					if (row.type !== "emergency_stop") return;
+					// Resolve member's display name; if we don't have them in our
+					// members map yet, fall back to a generic label.
+					const name =
+						currentMembersRef.current[row.convoy_member_id]?.display_name ??
+						"A driver";
+					showToast(
+						`🚨 ${name} has an emergency stop!`,
+						"#dc2626",
+						5000,
+					);
 				},
 			)
 			.subscribe();
@@ -410,25 +466,58 @@ export default function ConvoyMapScreen() {
 		});
 	}
 
-	function handleQuickStatus(type: StatusEventType) {
-		if (type === "emergency_stop") {
-			Alert.prompt(
-				"Emergency stop",
-				"Briefly tell the group what's happening (optional):",
-				[
-					{ text: "Cancel", style: "cancel" },
-					{
-						text: "Send",
-						style: "destructive",
-						onPress: (note?: string) =>
-							insertStatusEvent("emergency_stop", note?.slice(0, 120)),
-					},
-				],
-				"plain-text",
-			);
+	async function handleStatusEvent(
+		type: StatusEventType,
+		label: string,
+		note?: string,
+		toastColor: string = "#1a1a1a",
+	) {
+		if (statusCooldown) return;
+		const memberId = myMemberIdRef.current;
+		if (!memberId) {
+			showToast("Couldn't send — you're not a convoy member.", "#dc2626");
 			return;
 		}
-		insertStatusEvent(type).catch(() => {});
+
+		setActiveStatus(type);
+		setStatusCooldown(true);
+
+		try {
+			await insertStatusEvent(type, note);
+			showToast(label, toastColor);
+		} catch {
+			showToast("Couldn't send your status. Try again.", "#dc2626");
+		}
+
+		// 10s cooldown to prevent spam-tapping
+		setTimeout(() => {
+			setStatusCooldown(false);
+			setActiveStatus(null);
+		}, 10000);
+	}
+
+	function handleSOS() {
+		if (statusCooldown) return;
+		Alert.prompt(
+			"🚨 Emergency Stop",
+			"Add a short note (optional)",
+			[
+				{ text: "Cancel", style: "cancel" },
+				{
+					text: "Send SOS",
+					style: "destructive",
+					onPress: (note?: string) =>
+						handleStatusEvent(
+							"emergency_stop",
+							"🚨 SOS sent to your convoy",
+							note?.slice(0, 120),
+							"#dc2626",
+						),
+				},
+			],
+			"plain-text",
+			"",
+		);
 	}
 
 	// ── ETA (rough estimate, no routing engine) ───────────────────────────────
@@ -615,6 +704,16 @@ export default function ConvoyMapScreen() {
 				</View>
 			) : null}
 
+			{/* Status toast — absolute, floats over the map */}
+			{toast ? (
+				<View
+					pointerEvents="none"
+					style={[styles.toast, { backgroundColor: toast.color }]}
+				>
+					<Text style={styles.toastText}>{toast.message}</Text>
+				</View>
+			) : null}
+
 			{/* ── Bottom area ─────────────────────────────────────────────── */}
 			<View style={styles.bottomArea} pointerEvents="box-none">
 				{/* ETA bar */}
@@ -686,23 +785,43 @@ export default function ConvoyMapScreen() {
 						<QuickBtn
 							label="I'm late"
 							icon="🕒"
-							onPress={() => handleQuickStatus("running_late")}
+							active={activeStatus === "running_late"}
+							disabled={statusCooldown}
+							onPress={() =>
+								handleStatusEvent(
+									"running_late",
+									"⏰ Your convoy knows you're late",
+								)
+							}
 						/>
 						<QuickBtn
 							label="Tank"
 							icon="⛽"
-							onPress={() => handleQuickStatus("fuel_stop")}
+							active={activeStatus === "fuel_stop"}
+							disabled={statusCooldown}
+							onPress={() =>
+								handleStatusEvent(
+									"fuel_stop",
+									"⛽ Tank stop shared with convoy",
+								)
+							}
 						/>
 						<QuickBtn
 							label="Break"
 							icon="☕"
-							onPress={() => handleQuickStatus("break_needed")}
+							active={activeStatus === "break_needed"}
+							disabled={statusCooldown}
+							onPress={() =>
+								handleStatusEvent("break_needed", "☕ Break request sent")
+							}
 						/>
 						<QuickBtn
 							label="SOS"
 							icon="🚨"
 							danger
-							onPress={() => handleQuickStatus("emergency_stop")}
+							active={activeStatus === "emergency_stop"}
+							disabled={statusCooldown}
+							onPress={handleSOS}
 						/>
 					</View>
 
@@ -742,20 +861,44 @@ function QuickBtn({
 	icon,
 	onPress,
 	danger,
+	active,
+	disabled,
 }: {
 	label: string;
 	icon: string;
 	onPress: () => void;
 	danger?: boolean;
+	active?: boolean;
+	disabled?: boolean;
 }) {
+	// During cooldown the *unselected* buttons fade; the active one stays bright
+	// with a small check indicator so the user knows their status went through.
+	const fade = disabled && !active;
 	return (
 		<TouchableOpacity
-			style={[styles.quickBtn, danger && styles.quickBtnDanger]}
+			style={[
+				styles.quickBtn,
+				danger && styles.quickBtnDanger,
+				active && styles.quickBtnActive,
+				active && danger && styles.quickBtnActiveDanger,
+				fade && styles.quickBtnFaded,
+			]}
 			onPress={onPress}
+			disabled={disabled}
 			activeOpacity={0.8}
 		>
-			<Text style={styles.quickBtnIcon}>{icon}</Text>
-			<Text style={[styles.quickBtnLabel, danger && styles.quickBtnLabelDanger]}>
+			{active ? (
+				<Text style={styles.quickBtnCheck}>✓</Text>
+			) : (
+				<Text style={styles.quickBtnIcon}>{icon}</Text>
+			)}
+			<Text
+				style={[
+					styles.quickBtnLabel,
+					danger && styles.quickBtnLabelDanger,
+					active && styles.quickBtnLabelActive,
+				]}
+			>
 				{label}
 			</Text>
 		</TouchableOpacity>
@@ -1035,6 +1178,47 @@ const styles = StyleSheet.create({
 		letterSpacing: 0.2,
 	},
 	quickBtnLabelDanger: { color: "#fff" },
+
+	// Active/disabled state for quick buttons after a status is sent
+	quickBtnActive: {
+		backgroundColor: Colors.primary,
+		borderWidth: 0,
+	},
+	quickBtnActiveDanger: {
+		backgroundColor: Colors.danger,
+	},
+	quickBtnLabelActive: { color: "#fff", fontWeight: FontWeight.semibold },
+	quickBtnFaded: { opacity: 0.5 },
+	quickBtnCheck: {
+		fontSize: 18,
+		color: "#fff",
+		marginBottom: 4,
+		fontWeight: FontWeight.semibold,
+	},
+
+	// Floating toast over the map
+	toast: {
+		position: "absolute",
+		top: 100,
+		left: 24,
+		right: 24,
+		backgroundColor: "#1a1a1a",
+		borderRadius: 14,
+		padding: 14,
+		alignItems: "center",
+		zIndex: 999,
+		shadowColor: "#000",
+		shadowOffset: { width: 0, height: 4 },
+		shadowOpacity: 0.2,
+		shadowRadius: 12,
+		elevation: 8,
+	},
+	toastText: {
+		color: "#fff",
+		fontSize: 14,
+		fontWeight: FontWeight.medium,
+		textAlign: "center",
+	},
 
 	// Tab bar
 	tabBar: {

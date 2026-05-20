@@ -48,7 +48,7 @@ export default function PlanIntroScreen() {
 					</View>
 
 					<View style={styles.hero}>
-						<Text style={styles.eyebrow}>KONVOY AI</Text>
+						<Text style={styles.eyebrow}>CONVOI AI</Text>
 						<Text style={styles.title}>Plan your trip together</Text>
 						<Text style={styles.sub}>
 							Answer 5 quick questions. We'll generate 3 complete routes
