@@ -84,6 +84,10 @@ export interface Stop {
   duration_min: number;
   status: StopStatus;
   confirmed_at?: string;
+  /** Optional notes (free text) — added in the stop-management feature. */
+  notes?: string;
+  /** Manual ordering used by the leader-only reorder controls. */
+  order_index?: number;
   // Joined
   votes?: StopVote[];
   arrivals?: StopArrival[];

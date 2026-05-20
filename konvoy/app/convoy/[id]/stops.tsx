@@ -82,6 +82,15 @@ const STATUS_TEXT_ON_DARK: Record<StopStatus, boolean> = {
 	cancelled: true,
 };
 
+// Left-border accent that signals stop status at a glance on each card.
+// Built outside the styles block so TS can resolve the lookup by key.
+const STATUS_BORDER: Record<StopStatus, { borderLeftWidth: number; borderLeftColor: string }> = {
+	proposed: { borderLeftWidth: 4, borderLeftColor: "#999999" },
+	confirmed: { borderLeftWidth: 4, borderLeftColor: "#1a1a1a" },
+	passed: { borderLeftWidth: 4, borderLeftColor: "#999999" },
+	cancelled: { borderLeftWidth: 4, borderLeftColor: "#dc2626" },
+};
+
 const DURATION_OPTIONS = [
 	{ label: "15 min", value: 15 },
 	{ label: "30 min", value: 30 },
@@ -134,6 +143,8 @@ export default function StopsScreen() {
 	const [error, setError] = useState("");
 	const [proposing, setProposing] = useState(false);
 	const [proposeOpen, setProposeOpen] = useState(false);
+	const [editingStop, setEditingStop] = useState<Stop | null>(null);
+	const [savingEdit, setSavingEdit] = useState(false);
 
 	const myMember = useMemo(
 		() => members.find((m) => m.user_id === userId) ?? null,
@@ -149,6 +160,7 @@ export default function StopsScreen() {
 			.from("stops")
 			.select("*")
 			.eq("convoy_id", id)
+			.order("order_index", { ascending: true })
 			.order("created_at", { ascending: true });
 		if (e) throw e;
 		setStops((data ?? []) as Stop[]);
@@ -305,6 +317,142 @@ export default function StopsScreen() {
 		}
 	}
 
+	// ── Edit / delete / reorder / status menu ────────────────────────────────
+
+	function canEditStop(stop: Stop): boolean {
+		if (isLeader) return true;
+		const myMemberId = myMemberIdRef.current;
+		return (
+			stop.proposed_by === myMemberId && stop.status === "proposed"
+		);
+	}
+
+	async function handleEditSubmit(payload: {
+		name: string;
+		lat: number;
+		lng: number;
+		type: StopType;
+		duration_min: number;
+		note?: string;
+	}) {
+		if (!editingStop) return false;
+		setSavingEdit(true);
+		setError("");
+		try {
+			const lat = payload.lat || editingStop.lat;
+			const lng = payload.lng || editingStop.lng;
+			const { error: e } = await supabase
+				.from("stops")
+				.update({
+					name: payload.name.trim(),
+					type: payload.type,
+					lat,
+					lng,
+					duration_min: payload.duration_min,
+					notes: payload.note ?? null,
+				})
+				.eq("id", editingStop.id);
+			if (e) throw e;
+			await loadStops();
+			return true;
+		} catch (e: any) {
+			setError(e?.message ?? "Couldn't update stop.");
+			return false;
+		} finally {
+			setSavingEdit(false);
+		}
+	}
+
+	function confirmDelete(stop: Stop) {
+		Alert.alert(
+			"Remove this stop?",
+			`${stop.name} will be removed from the convoy plan.`,
+			[
+				{ text: "Cancel", style: "cancel" },
+				{
+					text: "Remove",
+					style: "destructive",
+					onPress: () => deleteStop(stop),
+				},
+			],
+		);
+	}
+
+	async function deleteStop(stop: Stop) {
+		setError("");
+		try {
+			// Explicit cascade — DB-level FK cascade would handle this but we
+			// don't assume it's configured.
+			await supabase.from("stop_votes").delete().eq("stop_id", stop.id);
+			await supabase.from("stop_arrivals").delete().eq("stop_id", stop.id);
+			const { error: e } = await supabase
+				.from("stops")
+				.delete()
+				.eq("id", stop.id);
+			if (e) throw e;
+			await loadStops();
+		} catch (e: any) {
+			setError(e?.message ?? "Couldn't remove stop.");
+		}
+	}
+
+	async function reorderStop(stop: Stop, direction: "up" | "down") {
+		const sorted = [...stops].sort(
+			(a, b) => (a.order_index ?? 0) - (b.order_index ?? 0),
+		);
+		const idx = sorted.findIndex((s) => s.id === stop.id);
+		if (idx < 0) return;
+		const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+		if (swapIdx < 0 || swapIdx >= sorted.length) return;
+
+		const other = sorted[swapIdx];
+		const myIdx = stop.order_index ?? idx;
+		const otherIdx = other.order_index ?? swapIdx;
+
+		setError("");
+		try {
+			// Two separate updates; Supabase doesn't expose a transaction wrapper.
+			const a = await supabase
+				.from("stops")
+				.update({ order_index: otherIdx })
+				.eq("id", stop.id);
+			if (a.error) throw a.error;
+			const b = await supabase
+				.from("stops")
+				.update({ order_index: myIdx })
+				.eq("id", other.id);
+			if (b.error) throw b.error;
+			await loadStops();
+		} catch (e: any) {
+			setError(e?.message ?? "Couldn't reorder stops.");
+		}
+	}
+
+	function openStatusMenu(stop: Stop) {
+		if (!isLeader) return;
+		const options: { label: string; status: StopStatus }[] = [
+			{ label: "Confirm stop", status: "confirmed" },
+			{ label: "Mark as passed", status: "passed" },
+			{ label: "Cancel stop", status: "cancelled" },
+		];
+		if (stop.status === "cancelled" || stop.status === "passed") {
+			options.push({ label: "Reopen", status: "proposed" });
+		}
+		// Filter out the current status — no-op
+		const filtered = options.filter((o) => o.status !== stop.status);
+		Alert.alert(
+			stop.name,
+			"Change stop status",
+			[
+				...filtered.map((o) => ({
+					text: o.label,
+					onPress: () => setStopStatus(stop.id, o.status),
+				})),
+				{ text: "Cancel", style: "cancel" as const },
+			],
+		);
+	}
+
 	async function markArrived(stopId: string) {
 		const memberId = myMemberIdRef.current;
 		if (!memberId) return;
@@ -386,6 +534,10 @@ export default function StopsScreen() {
 				}
 			}
 
+			// Append new stops to the end of the leader's ordered list.
+			const nextOrder =
+				stops.reduce((max, s) => Math.max(max, s.order_index ?? 0), -1) + 1;
+
 			const { error: e } = await supabase.from("stops").insert({
 				convoy_id: id,
 				proposed_by: memberId,
@@ -395,6 +547,8 @@ export default function StopsScreen() {
 				lng,
 				duration_min: payload.duration_min,
 				status: "proposed",
+				notes: payload.note ?? null,
+				order_index: nextOrder,
 			});
 			if (e) throw e;
 			await loadStops();
@@ -493,14 +647,27 @@ export default function StopsScreen() {
 				</View>
 			) : (
 				<ScrollView contentContainerStyle={styles.list}>
-					{stops.map((stop) => {
+					{stops.map((stop, idx) => {
 						const counts = getVoteCounts(stop.id);
 						const arr = getArrivals(stop.id);
+						const editable = canEditStop(stop);
+						const isPassed = stop.status === "passed";
+						const isCancelled = stop.status === "cancelled";
+						const nameStrike = isPassed || isCancelled;
 						return (
-							<Card
+							<TouchableOpacity
 								key={stop.id}
+								activeOpacity={1}
+								onLongPress={() => openStatusMenu(stop)}
+								disabled={!isLeader}
+							>
+							<Card
 								accent={stop.status === "confirmed"}
-								style={styles.stopCard}
+								style={[
+									styles.stopCard,
+									STATUS_BORDER[stop.status],
+									isPassed && styles.stopCardPassed,
+								]}
 							>
 								{/* Title row */}
 								<View style={styles.stopHeader}>
@@ -508,12 +675,23 @@ export default function StopsScreen() {
 										<Text style={styles.iconText}>{STOP_ICON[stop.type]}</Text>
 									</View>
 									<View style={{ flex: 1 }}>
-										<Text style={styles.stopName} numberOfLines={1}>
+										<Text
+											style={[
+												styles.stopName,
+												nameStrike && styles.stopNameStrike,
+											]}
+											numberOfLines={1}
+										>
 											{stop.name}
 										</Text>
 										<Text style={styles.stopMeta}>
 											{STOP_TYPE_LABEL[stop.type]} · {stop.duration_min} min
 										</Text>
+										{stop.notes ? (
+											<Text style={styles.stopNote} numberOfLines={1}>
+												{stop.notes}
+											</Text>
+										) : null}
 									</View>
 									<View
 										style={[
@@ -642,7 +820,68 @@ export default function StopsScreen() {
 										/>
 									</View>
 								) : null}
+
+								{/* Management row — reorder / edit / delete */}
+								{isLeader || editable ? (
+									<View style={styles.manageRow}>
+										{isLeader ? (
+											<>
+												<TouchableOpacity
+													style={styles.manageBtn}
+													onPress={() => reorderStop(stop, "up")}
+													disabled={idx === 0}
+													hitSlop={6}
+												>
+													<Text
+														style={[
+															styles.manageIcon,
+															idx === 0 && styles.manageIconDisabled,
+														]}
+													>
+														↑
+													</Text>
+												</TouchableOpacity>
+												<TouchableOpacity
+													style={styles.manageBtn}
+													onPress={() => reorderStop(stop, "down")}
+													disabled={idx === stops.length - 1}
+													hitSlop={6}
+												>
+													<Text
+														style={[
+															styles.manageIcon,
+															idx === stops.length - 1 &&
+																styles.manageIconDisabled,
+														]}
+													>
+														↓
+													</Text>
+												</TouchableOpacity>
+											</>
+										) : null}
+										<View style={{ flex: 1 }} />
+										{editable ? (
+											<TouchableOpacity
+												style={styles.manageBtn}
+												onPress={() => setEditingStop(stop)}
+												hitSlop={6}
+											>
+												<Text style={styles.manageIcon}>✏️</Text>
+											</TouchableOpacity>
+										) : null}
+										{isLeader ? (
+											<TouchableOpacity
+												style={styles.manageBtn}
+												onPress={() => confirmDelete(stop)}
+												hitSlop={6}
+											>
+												<Text style={styles.manageIcon}>🗑️</Text>
+											</TouchableOpacity>
+										) : null}
+									</View>
+								) : null}
 							</Card>
+							</TouchableOpacity>
 						);
 					})}
 				</ScrollView>
@@ -657,6 +896,30 @@ export default function StopsScreen() {
 					if (ok) setProposeOpen(false);
 				}}
 				submitting={proposing}
+			/>
+
+			{/* Edit modal — reuses the same sheet, pre-filled from editingStop */}
+			<ProposeStopSheet
+				visible={editingStop !== null}
+				mode="edit"
+				initial={
+					editingStop
+						? {
+								name: editingStop.name,
+								lat: editingStop.lat,
+								lng: editingStop.lng,
+								type: editingStop.type,
+								duration_min: editingStop.duration_min,
+								note: editingStop.notes ?? "",
+							}
+						: undefined
+				}
+				onClose={() => setEditingStop(null)}
+				onSubmit={async (payload) => {
+					const ok = await handleEditSubmit(payload);
+					if (ok) setEditingStop(null);
+				}}
+				submitting={savingEdit}
 			/>
 		</SafeAreaView>
 	);
@@ -708,11 +971,22 @@ const PLACES_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_KEY ?? "";
 
 function ProposeStopSheet({
 	visible,
+	mode = "propose",
+	initial,
 	onClose,
 	onSubmit,
 	submitting,
 }: {
 	visible: boolean;
+	mode?: "propose" | "edit";
+	initial?: {
+		name: string;
+		lat: number;
+		lng: number;
+		type: StopType;
+		duration_min: number;
+		note?: string;
+	};
 	onClose: () => void;
 	onSubmit: (payload: {
 		name: string;
@@ -724,25 +998,26 @@ function ProposeStopSheet({
 	}) => void;
 	submitting: boolean;
 }) {
-	const [name, setName] = useState("");
-	const [lat, setLat] = useState(0);
-	const [lng, setLng] = useState(0);
-	const [type, setType] = useState<StopType>("fuel");
-	const [duration, setDuration] = useState(30);
-	const [note, setNote] = useState("");
+	const [name, setName] = useState(initial?.name ?? "");
+	const [lat, setLat] = useState(initial?.lat ?? 0);
+	const [lng, setLng] = useState(initial?.lng ?? 0);
+	const [type, setType] = useState<StopType>(initial?.type ?? "fuel");
+	const [duration, setDuration] = useState(initial?.duration_min ?? 30);
+	const [note, setNote] = useState(initial?.note ?? "");
 	const [err, setErr] = useState("");
 
+	// Reset / re-seed on open. In propose mode we clear; in edit mode we
+	// preload the supplied initial values.
 	useEffect(() => {
-		if (!visible) {
-			setName("");
-			setLat(0);
-			setLng(0);
-			setType("fuel");
-			setDuration(30);
-			setNote("");
-			setErr("");
-		}
-	}, [visible]);
+		if (!visible) return;
+		setName(initial?.name ?? "");
+		setLat(initial?.lat ?? 0);
+		setLng(initial?.lng ?? 0);
+		setType(initial?.type ?? "fuel");
+		setDuration(initial?.duration_min ?? 30);
+		setNote(initial?.note ?? "");
+		setErr("");
+	}, [visible, initial]);
 
 	function handleSubmit() {
 		if (!name.trim()) {
@@ -779,7 +1054,9 @@ function ProposeStopSheet({
 				<View style={styles.sheet}>
 					<View style={styles.sheetHandle} />
 					<View style={styles.sheetHeader}>
-						<Text style={styles.sheetTitle}>Propose a stop</Text>
+						<Text style={styles.sheetTitle}>
+							{mode === "edit" ? "Edit stop" : "Propose a stop"}
+						</Text>
 						<TouchableOpacity onPress={onClose} hitSlop={12}>
 							<Text style={styles.sheetClose}>✕</Text>
 						</TouchableOpacity>
@@ -952,7 +1229,7 @@ function ProposeStopSheet({
 						) : null}
 
 						<Button
-							label="Propose stop"
+							label={mode === "edit" ? "Save changes" : "Propose stop"}
 							onPress={handleSubmit}
 							loading={submitting}
 							disabled={!name.trim() || submitting}
@@ -1165,6 +1442,45 @@ const styles = StyleSheet.create({
 	confirmedBtn: {
 		flex: 1,
 		height: 52,
+	},
+
+	// ── Status-based card treatment ──────────────────────────────────────────
+	// (Left-border colour comes from STATUS_BORDER outside this StyleSheet.)
+	stopCardPassed: { opacity: 0.5 },
+	stopNameStrike: { textDecorationLine: "line-through" },
+	stopNote: {
+		fontSize: FontSize.xs,
+		color: Colors.textMuted,
+		marginTop: 4,
+		fontStyle: "italic",
+		fontWeight: FontWeight.regular,
+	},
+
+	// ── Leader/proposer management row (reorder / edit / delete) ─────────────
+	manageRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: Spacing.xs,
+		marginTop: Spacing.md,
+		paddingTop: Spacing.sm,
+		borderTopWidth: 1,
+		borderTopColor: Colors.borderSubtle,
+	},
+	manageBtn: {
+		width: 40,
+		height: 40,
+		alignItems: "center",
+		justifyContent: "center",
+		borderRadius: Radius.full,
+	},
+	manageIcon: {
+		fontSize: 18,
+		color: Colors.textPrimary,
+		fontWeight: FontWeight.regular,
+	},
+	manageIconDisabled: {
+		color: Colors.textMuted,
+		opacity: 0.4,
 	},
 
 	// Modal

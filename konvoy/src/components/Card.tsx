@@ -1,11 +1,11 @@
 import React from "react";
-import { StyleSheet, ViewStyle } from "react-native";
+import { StyleProp, StyleSheet, ViewStyle } from "react-native";
 import { Colors, Radius, Spacing } from "../constants/theme";
 import { NeumorphicView } from "./NeumorphicView";
 
 interface CardProps {
 	children: React.ReactNode;
-	style?: ViewStyle;
+	style?: StyleProp<ViewStyle>;
 	accent?: boolean; // black left border
 }
 
