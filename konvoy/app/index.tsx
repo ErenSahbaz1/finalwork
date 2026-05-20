@@ -256,14 +256,14 @@ export default function HomeScreen() {
 					<View style={styles.hero}>
 						<Text style={styles.heroText}>Ready to roll?</Text>
 						<Text style={styles.heroSub}>
-							Start a convoy or join one with an invite code.
+							Plan your perfect road trip together.
 						</Text>
 					</View>
 
 					<View style={styles.actions}>
 						<Button
 							label="Start a convoy"
-							onPress={() => router.push("/convoy/create")}
+							onPress={() => router.push("/plan")}
 						/>
 						<Button
 							label="Join a convoy"

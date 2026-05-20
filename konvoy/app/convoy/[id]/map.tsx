@@ -722,7 +722,7 @@ export default function ConvoyMapScreen() {
 						<TabItem
 							label="Fuel"
 							icon="⛽"
-							onPress={() => router.push(`/fuel?convoy=${id}` as any)}
+							onPress={() => router.push(`/convoy/fuel?convoy=${id}` as any)}
 						/>
 						<TabItem
 							label="Settings"

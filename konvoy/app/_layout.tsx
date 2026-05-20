@@ -120,6 +120,14 @@ export default function RootLayout() {
 				<Stack.Screen name="convoy/[id]/lobby" />
 				<Stack.Screen name="convoy/[id]/map" />
 				<Stack.Screen name="convoy/[id]/stops" />
+				<Stack.Screen name="convoy/fuel/index" />
+				<Stack.Screen name="plan/index" />
+				<Stack.Screen name="plan/step1" />
+				<Stack.Screen name="plan/step2" />
+				<Stack.Screen name="plan/step3" />
+				<Stack.Screen name="plan/step4" />
+				<Stack.Screen name="plan/step5" />
+				<Stack.Screen name="plan/results" />
 				<Stack.Screen name="settings/index" />
 			</Stack>
 		</>
