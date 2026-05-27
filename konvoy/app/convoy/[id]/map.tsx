@@ -8,7 +8,9 @@ import {
 	Alert,
 	Linking,
 	Platform,
+	Animated,
 } from "react-native";
+import * as Haptics from "expo-haptics";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import MapView, { Marker, PROVIDER_DEFAULT } from "react-native-maps";
@@ -90,22 +92,36 @@ export default function ConvoyMapScreen() {
 	const [toast, setToast] = useState<{
 		message: string;
 		color: string;
-		durationMs: number;
 	} | null>(null);
+	const toastAnim = useRef(new Animated.Value(-100)).current;
+	const toastHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const showToast = useCallback(
-		(message: string, color: string = "#1a1a1a", durationMs = 2500) => {
-			setToast({ message, color, durationMs });
+		(message: string, color: string = "#1a1a1a", durationMs = 3000) => {
+			// Cancel a pending hide animation so back-to-back toasts don't fight.
+			if (toastHideTimer.current) {
+				clearTimeout(toastHideTimer.current);
+				toastHideTimer.current = null;
+			}
+			setToast({ message, color });
+			// Spring in from above the screen.
+			Animated.spring(toastAnim, {
+				toValue: 0,
+				useNativeDriver: true,
+				speed: 20,
+				bounciness: 8,
+			}).start();
+			// Slide back out after `durationMs`, then clear the toast.
+			toastHideTimer.current = setTimeout(() => {
+				Animated.timing(toastAnim, {
+					toValue: -100,
+					duration: 300,
+					useNativeDriver: true,
+				}).start(() => setToast(null));
+			}, durationMs);
 		},
-		[],
+		[toastAnim],
 	);
-
-	// Auto-hide toast based on its own duration
-	useEffect(() => {
-		if (!toast) return;
-		const t = setTimeout(() => setToast(null), toast.durationMs);
-		return () => clearTimeout(t);
-	}, [toast]);
 
 	// Tick to keep stale opacity fresh
 	useEffect(() => {
@@ -191,23 +207,65 @@ export default function ConvoyMapScreen() {
 		}
 
 		async function loadNextStop() {
-			const { data, error } = await supabase
+			// 1. Pull every still-relevant stop in this convoy, ordered manually
+			//    by the leader (order_index). We include `proposed` too so the
+			//    panel can flag the upcoming planned stop before it's confirmed.
+			const { data: stopRows, error: stopsErr } = await supabase
 				.from("stops")
 				.select("*")
 				.eq("convoy_id", id)
-				.eq("status", "confirmed")
-				.order("created_at", { ascending: true })
-				.limit(1)
-				.maybeSingle();
-			if (error || cancelled) return;
-			setNextStop((data as Stop) ?? null);
+				.in("status", ["confirmed", "proposed"])
+				.order("order_index", { ascending: true })
+				.order("created_at", { ascending: true });
+			if (stopsErr || cancelled) return;
 
-			if (data) {
+			const stops = (stopRows ?? []) as Stop[];
+			if (stops.length === 0) {
+				if (!cancelled) {
+					setNextStop(null);
+					setArrivedCount(null);
+				}
+				return;
+			}
+
+			// 2. Find which of these the current user has already marked arrived,
+			//    so the panel can skip past them even if the leader hasn't yet
+			//    flipped the stop to `passed`.
+			const myMemberId = myMemberIdRef.current;
+			let arrivedStopIds = new Set<string>();
+			if (myMemberId) {
+				const { data: myArrivals } = await supabase
+					.from("stop_arrivals")
+					.select("stop_id")
+					.eq("convoy_member_id", myMemberId)
+					.in(
+						"stop_id",
+						stops.map((s) => s.id),
+					);
+				arrivedStopIds = new Set(
+					(myArrivals ?? []).map((a: any) => a.stop_id as string),
+				);
+			}
+
+			// 3. Pick the first stop in route order the user hasn't touched yet.
+			const next =
+				stops.find(
+					(s) =>
+						s.status !== "passed" &&
+						s.status !== "cancelled" &&
+						!arrivedStopIds.has(s.id),
+				) ?? null;
+
+			if (cancelled) return;
+			setNextStop(next);
+
+			// 4. Refresh the "X / Y arrived" counter for that stop.
+			if (next) {
 				const [{ count: arrived }, { count: total }] = await Promise.all([
 					supabase
 						.from("stop_arrivals")
 						.select("id", { count: "exact", head: true })
-						.eq("stop_id", (data as Stop).id),
+						.eq("stop_id", next.id),
 					supabase
 						.from("convoy_members")
 						.select("id", { count: "exact", head: true })
@@ -272,6 +330,30 @@ export default function ConvoyMapScreen() {
 					loadConvoyAndMembers().catch(() => {});
 				},
 			)
+			// Status flips (passed / cancelled / confirmed) and reorders need to
+			// re-resolve which stop is "next".
+			.on(
+				"postgres_changes",
+				{
+					event: "*",
+					schema: "public",
+					table: "stops",
+					filter: `convoy_id=eq.${id}`,
+				},
+				() => {
+					loadNextStop().catch(() => {});
+				},
+			)
+			// A fresh arrival from anyone may move the user past the current
+			// next-stop (their own arrival certainly does; everyone else's may
+			// flip the stop to `passed` via the stops listener above).
+			.on(
+				"postgres_changes",
+				{ event: "INSERT", schema: "public", table: "stop_arrivals" },
+				() => {
+					loadNextStop().catch(() => {});
+				},
+			)
 			.on(
 				"postgres_changes",
 				{
@@ -282,20 +364,38 @@ export default function ConvoyMapScreen() {
 				(payload) => {
 					const row: any = payload.new;
 					if (!row) return;
-					// Only react to other members of this convoy (current state
-					// snapshot via myMemberIdRef + the latest members map).
+					// Only react to OTHER members' events; my own taps already gave
+					// me local feedback via showToast in handleStatusEvent.
 					if (row.convoy_member_id === myMemberIdRef.current) return;
-					if (row.type !== "emergency_stop") return;
-					// Resolve member's display name; if we don't have them in our
-					// members map yet, fall back to a generic label.
+
+					// Resolve member's display name from the latest members snapshot.
 					const name =
 						currentMembersRef.current[row.convoy_member_id]?.display_name ??
 						"A driver";
-					showToast(
-						`🚨 ${name} has an emergency stop!`,
-						"#dc2626",
-						5000,
-					);
+
+					// Emergency is prominent — full Alert.alert with View-on-map.
+					// Everything else is the slide-down toast.
+					switch (row.type as StatusEventType) {
+						case "emergency_stop":
+							showEmergencyAlert(name, row.note, row.lat, row.lng);
+							break;
+						case "running_late":
+							showToast(`⏰ ${name} is running late`, "#d97706");
+							break;
+						case "fuel_stop":
+							showToast(`⛽ ${name} needs a fuel stop`, "#2563eb");
+							break;
+						case "break_needed":
+							showToast(`☕ ${name} needs a break`, "#1a1a1a");
+							break;
+						case "departed":
+							showToast(`🚗 ${name} has departed`, "#16a34a");
+							break;
+						default:
+							// technical_issue or any future event type
+							showToast(`📢 ${name} sent a status update`, "#1a1a1a");
+							break;
+					}
 				},
 			)
 			.subscribe();
@@ -455,15 +555,78 @@ export default function ConvoyMapScreen() {
 	}, [leaderPos]);
 
 	async function insertStatusEvent(type: StatusEventType, note?: string) {
-		const memberId = myMemberIdRef.current;
-		if (!memberId) return;
-		await supabase.from("status_events").insert({
+		// Re-fetch the user's membership in this convoy so we never insert with
+		// a stale id (e.g. the user re-joined under a different member row).
+		if (!userId || !id) {
+			throw new Error("Missing convoy context.");
+		}
+		const { data: member, error: memberErr } = await supabase
+			.from("convoy_members")
+			.select("id")
+			.eq("convoy_id", id)
+			.eq("user_id", userId)
+			.maybeSingle();
+		if (memberErr) throw memberErr;
+		if (!member) throw new Error("You're not a member of this convoy.");
+
+		const memberId = member.id;
+		myMemberIdRef.current = memberId;
+
+		const { error: insertErr } = await supabase.from("status_events").insert({
 			convoy_member_id: memberId,
 			type,
 			lat: myPosition?.lat ?? null,
 			lng: myPosition?.lng ?? null,
 			note: note ?? null,
 		});
+		if (insertErr) throw insertErr;
+
+		// Mirror the event onto the member's status field so the lobby + member
+		// list reflect what's happening without a separate subscription. We use
+		// the existing MemberStatus values ('online' / 'weak_signal' / 'offline')
+		// — emergencies flip to 'offline' so the dot shifts to red in the lobby.
+		const memberStatusPatch =
+			type === "emergency_stop" ? "offline" : "online";
+		await supabase
+			.from("convoy_members")
+			.update({ status: memberStatusPatch })
+			.eq("id", memberId)
+			.then(() => {}, () => {});
+	}
+
+	function showEmergencyAlert(
+		name: string,
+		note: string | null,
+		lat: number | null,
+		lng: number | null,
+	) {
+		// Strong haptic on the receiving phone so it doesn't get missed.
+		Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
+			() => {},
+		);
+		Alert.alert(
+			"🚨 Emergency Stop",
+			`${name} has an emergency!${note ? `\n\n"${note}"` : ""}`,
+			[
+				{
+					text: "View on map",
+					onPress: () => {
+						if (lat != null && lng != null && mapRef.current) {
+							mapRef.current.animateToRegion(
+								{
+									latitude: lat,
+									longitude: lng,
+									latitudeDelta: 0.01,
+									longitudeDelta: 0.01,
+								},
+								500,
+							);
+						}
+					},
+				},
+				{ text: "OK", style: "cancel" },
+			],
+		);
 	}
 
 	async function handleStatusEvent(
@@ -535,6 +698,13 @@ export default function ConvoyMapScreen() {
 			Math.sin(dLat / 2) ** 2 +
 			Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
 		return 2 * R * Math.asin(Math.sqrt(h));
+	}
+
+	// Human-friendly distance: metres under 1 km, kilometres above.
+	function formatDistance(km: number): string {
+		if (!Number.isFinite(km)) return "Distance unknown";
+		if (km < 1) return `${Math.round(km * 1000)} m away`;
+		return `${km.toFixed(1)} km away`;
 	}
 
 	const etaByMember = useMemo(() => {
@@ -704,14 +874,20 @@ export default function ConvoyMapScreen() {
 				</View>
 			) : null}
 
-			{/* Status toast — absolute, floats over the map */}
+			{/* Status toast — absolute, floats over the map, slides down from top */}
 			{toast ? (
-				<View
+				<Animated.View
 					pointerEvents="none"
-					style={[styles.toast, { backgroundColor: toast.color }]}
+					style={[
+						styles.toast,
+						{
+							backgroundColor: toast.color,
+							transform: [{ translateY: toastAnim }],
+						},
+					]}
 				>
 					<Text style={styles.toastText}>{toast.message}</Text>
-				</View>
+				</Animated.View>
 			) : null}
 
 			{/* ── Bottom area ─────────────────────────────────────────────── */}
@@ -769,7 +945,7 @@ export default function ConvoyMapScreen() {
 								</Text>
 								<Text style={styles.nextStopMeta}>
 									{myDistanceToStopKm != null
-										? `${myDistanceToStopKm.toFixed(1)} km away`
+										? formatDistance(myDistanceToStopKm)
 										: "Distance unknown"}
 									{arrivedCount
 										? `  •  ${arrivedCount.arrived}/${arrivedCount.total} arrived`

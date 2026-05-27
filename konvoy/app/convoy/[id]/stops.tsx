@@ -19,11 +19,19 @@ import {
 	Linking,
 	Platform,
 	KeyboardAvoidingView,
+	Animated,
 } from "react-native";
 import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
+import MapView, { Marker, PROVIDER_DEFAULT } from "react-native-maps";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Location from "expo-location";
+import * as Haptics from "expo-haptics";
+import DraggableFlatList, {
+	type RenderItemParams,
+	ScaleDecorator,
+} from "react-native-draggable-flatlist";
 import { supabase } from "../../../src/lib/supabase";
+import { isApproximate, stripApprox } from "../../../src/lib/places";
 import { Button } from "../../../src/components/Button";
 import { Card } from "../../../src/components/Card";
 import {
@@ -144,7 +152,56 @@ export default function StopsScreen() {
 	const [proposing, setProposing] = useState(false);
 	const [proposeOpen, setProposeOpen] = useState(false);
 	const [editingStop, setEditingStop] = useState<Stop | null>(null);
+	const [detailStop, setDetailStop] = useState<Stop | null>(null);
+	const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(
+		null,
+	);
+
+	// One-shot fetch of the user's current location when a detail opens, so
+	// we can compute and show the distance from the user to the stop.
+	useEffect(() => {
+		if (!detailStop) return;
+		let cancelled = false;
+		(async () => {
+			try {
+				const perm = await Location.getForegroundPermissionsAsync();
+				if (perm.status !== "granted") return;
+				const loc =
+					(await Location.getLastKnownPositionAsync()) ??
+					(await Location.getCurrentPositionAsync({
+						accuracy: Location.Accuracy.Balanced,
+					}));
+				if (cancelled || !loc) return;
+				setUserPos({
+					lat: loc.coords.latitude,
+					lng: loc.coords.longitude,
+				});
+			} catch {
+				// best-effort — distance row will just say "Unknown"
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [detailStop]);
 	const [savingEdit, setSavingEdit] = useState(false);
+
+	// Local mirror of stop_ids the current user has already arrived at — used to
+	// keep the "I arrived" button in the disabled "✓ Arrived" state across
+	// navigations without waiting for the realtime push.
+	const [arrivedStops, setArrivedStops] = useState<string[]>([]);
+
+	// Toast (success / arrival feedback)
+	const [toast, setToast] = useState<string | null>(null);
+	useEffect(() => {
+		if (!toast) return;
+		const t = setTimeout(() => setToast(null), 2500);
+		return () => clearTimeout(t);
+	}, [toast]);
+	function showToast(message: string) {
+		setToast(message);
+	}
+
 
 	const myMember = useMemo(
 		() => members.find((m) => m.user_id === userId) ?? null,
@@ -396,39 +453,11 @@ export default function StopsScreen() {
 		}
 	}
 
-	async function reorderStop(stop: Stop, direction: "up" | "down") {
-		const sorted = [...stops].sort(
-			(a, b) => (a.order_index ?? 0) - (b.order_index ?? 0),
-		);
-		const idx = sorted.findIndex((s) => s.id === stop.id);
-		if (idx < 0) return;
-		const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-		if (swapIdx < 0 || swapIdx >= sorted.length) return;
-
-		const other = sorted[swapIdx];
-		const myIdx = stop.order_index ?? idx;
-		const otherIdx = other.order_index ?? swapIdx;
-
-		setError("");
-		try {
-			// Two separate updates; Supabase doesn't expose a transaction wrapper.
-			const a = await supabase
-				.from("stops")
-				.update({ order_index: otherIdx })
-				.eq("id", stop.id);
-			if (a.error) throw a.error;
-			const b = await supabase
-				.from("stops")
-				.update({ order_index: myIdx })
-				.eq("id", other.id);
-			if (b.error) throw b.error;
-			await loadStops();
-		} catch (e: any) {
-			setError(e?.message ?? "Couldn't reorder stops.");
-		}
-	}
-
 	function openStatusMenu(stop: Stop) {
+		// Tactile feedback even when there's no action sheet to show
+		// (non-leaders) — the DraggableFlatList's ScaleDecorator handles the
+		// visual scale-up while dragging.
+		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 		if (!isLeader) return;
 		const options: { label: string; status: StopStatus }[] = [
 			{ label: "Confirm stop", status: "confirmed" },
@@ -457,21 +486,80 @@ export default function StopsScreen() {
 		const memberId = myMemberIdRef.current;
 		if (!memberId) return;
 		setError("");
+
+		// Optimistic UI: flip the local "arrived" set immediately so the button
+		// becomes "✓ Arrived" without waiting for realtime.
+		setArrivedStops((prev) =>
+			prev.includes(stopId) ? prev : [...prev, stopId],
+		);
+
 		try {
 			const already = arrivals.find(
 				(a) => a.stop_id === stopId && a.convoy_member_id === memberId,
 			);
-			if (already) return;
-			const { error: e } = await supabase.from("stop_arrivals").insert({
-				stop_id: stopId,
-				convoy_member_id: memberId,
-			});
-			if (e) throw e;
+			if (!already) {
+				const { error: e } = await supabase.from("stop_arrivals").insert({
+					stop_id: stopId,
+					convoy_member_id: memberId,
+				});
+				if (e) throw e;
+			}
+
+			// After our arrival lands, check whether everyone has now arrived.
+			// If yes, flip the stop to "passed" so the map's next-stop indicator
+			// advances to the next confirmed stop (the map screen subscribes to
+			// the stops table via realtime — no extra wiring needed there).
+			const [{ data: latestArrivals }, { data: convoyMembers }] =
+				await Promise.all([
+					supabase
+						.from("stop_arrivals")
+						.select("id, convoy_member_id")
+						.eq("stop_id", stopId),
+					supabase
+						.from("convoy_members")
+						.select("id")
+						.eq("convoy_id", id),
+				]);
+
+			const arrivedCount = new Set(
+				(latestArrivals ?? []).map((r: any) => r.convoy_member_id),
+			).size;
+			const totalMembers = convoyMembers?.length ?? 0;
+			if (totalMembers > 0 && arrivedCount >= totalMembers) {
+				await supabase
+					.from("stops")
+					.update({ status: "passed" })
+					.eq("id", stopId);
+			}
+
 			await loadVotesAndArrivals();
+			await loadStops();
+
+			Haptics.notificationAsync(
+				Haptics.NotificationFeedbackType.Success,
+			).catch(() => {});
+			showToast("✓ Arrival confirmed!");
 		} catch (e: any) {
+			// Roll back the optimistic flip on failure.
+			setArrivedStops((prev) => prev.filter((sId) => sId !== stopId));
 			setError(e?.message ?? "Couldn't mark arrival.");
 		}
 	}
+
+	// Keep arrivedStops in sync with whatever the server has for this user.
+	// Runs whenever arrivals are reloaded so a return-trip to the screen lands
+	// in the correct button state.
+	useEffect(() => {
+		const memberId = myMemberIdRef.current;
+		if (!memberId) return;
+		const mine = arrivals
+			.filter((a) => a.convoy_member_id === memberId)
+			.map((a) => a.stop_id);
+		setArrivedStops((prev) => {
+			const merged = new Set<string>([...prev, ...mine]);
+			return Array.from(merged);
+		});
+	}, [arrivals]);
 
 	function openNavigate(stop: Stop) {
 		// Use the stop's coordinates as the destination, not the user's location.
@@ -646,31 +734,85 @@ export default function StopsScreen() {
 					/>
 				</View>
 			) : (
-				<ScrollView contentContainerStyle={styles.list}>
-					{stops.map((stop, idx) => {
+				<DraggableFlatList
+					data={stops}
+					keyExtractor={(item) => item.id}
+					contentContainerStyle={styles.list}
+					activationDistance={isLeader ? 8 : 999}
+					onDragBegin={() => {
+						Haptics.impactAsync(
+							Haptics.ImpactFeedbackStyle.Light,
+						).catch(() => {});
+					}}
+					onDragEnd={({ data }) => {
+						if (!isLeader) return;
+						// Optimistic local reorder first so the UI doesn't snap back.
+						setStops(data);
+						// Persist new order_index for each stop. Fire-and-forget;
+						// realtime will reconcile any drift.
+						(async () => {
+							try {
+								await Promise.all(
+									data.map((s, i) =>
+										supabase
+											.from("stops")
+											.update({ order_index: i })
+											.eq("id", s.id),
+									),
+								);
+								Haptics.notificationAsync(
+									Haptics.NotificationFeedbackType.Success,
+								).catch(() => {});
+							} catch (e: any) {
+								setError(e?.message ?? "Couldn't save new order.");
+								await loadStops();
+							}
+						})();
+					}}
+					renderItem={({
+						item: stop,
+						drag,
+						isActive,
+					}: RenderItemParams<Stop>) => {
 						const counts = getVoteCounts(stop.id);
 						const arr = getArrivals(stop.id);
 						const editable = canEditStop(stop);
 						const isPassed = stop.status === "passed";
 						const isCancelled = stop.status === "cancelled";
 						const nameStrike = isPassed || isCancelled;
+						const iArrived =
+							arr.iArrived || arrivedStops.includes(stop.id);
 						return (
-							<TouchableOpacity
-								key={stop.id}
-								activeOpacity={1}
-								onLongPress={() => openStatusMenu(stop)}
-								disabled={!isLeader}
-							>
+							<ScaleDecorator>
+								<TouchableOpacity
+									activeOpacity={1}
+									delayLongPress={200}
+									onLongPress={() => {
+										if (isLeader) {
+											Haptics.impactAsync(
+												Haptics.ImpactFeedbackStyle.Medium,
+											).catch(() => {});
+											drag();
+										} else {
+											openStatusMenu(stop);
+										}
+									}}
+								>
 							<Card
 								accent={stop.status === "confirmed"}
 								style={[
 									styles.stopCard,
 									STATUS_BORDER[stop.status],
 									isPassed && styles.stopCardPassed,
+									isActive && styles.stopCardDragging,
 								]}
 							>
-								{/* Title row */}
-								<View style={styles.stopHeader}>
+								{/* Title row — tap to open the detail sheet */}
+								<TouchableOpacity
+									style={styles.stopHeader}
+									onPress={() => setDetailStop(stop)}
+									activeOpacity={0.7}
+								>
 									<View style={styles.iconBox}>
 										<Text style={styles.iconText}>{STOP_ICON[stop.type]}</Text>
 									</View>
@@ -687,9 +829,16 @@ export default function StopsScreen() {
 										<Text style={styles.stopMeta}>
 											{STOP_TYPE_LABEL[stop.type]} · {stop.duration_min} min
 										</Text>
-										{stop.notes ? (
+										{isApproximate(stop.notes) ? (
+											<View style={styles.approxBadge}>
+												<Text style={styles.approxBadgeText}>
+													📍 approximate location
+												</Text>
+											</View>
+										) : null}
+										{stop.notes && stripApprox(stop.notes) ? (
 											<Text style={styles.stopNote} numberOfLines={1}>
-												{stop.notes}
+												{stripApprox(stop.notes)}
 											</Text>
 										) : null}
 									</View>
@@ -710,7 +859,7 @@ export default function StopsScreen() {
 											{STATUS_LABEL[stop.status]}
 										</Text>
 									</View>
-								</View>
+								</TouchableOpacity>
 
 								{/* Vote + arrival summary */}
 								<View style={styles.summaryRow}>
@@ -812,52 +961,32 @@ export default function StopsScreen() {
 											style={styles.confirmedBtn}
 										/>
 										<Button
-											label={arr.iArrived ? "✓ Arrived" : "I arrived"}
+											label={iArrived ? "✓ Arrived" : "I arrived"}
 											onPress={() => markArrived(stop.id)}
-											disabled={arr.iArrived}
+											disabled={iArrived}
 											variant="ghost"
 											style={styles.confirmedBtn}
 										/>
 									</View>
 								) : null}
 
-								{/* Management row — reorder / edit / delete */}
+								{/* Management row — drag handle / edit / delete */}
 								{isLeader || editable ? (
 									<View style={styles.manageRow}>
 										{isLeader ? (
-											<>
-												<TouchableOpacity
-													style={styles.manageBtn}
-													onPress={() => reorderStop(stop, "up")}
-													disabled={idx === 0}
-													hitSlop={6}
-												>
-													<Text
-														style={[
-															styles.manageIcon,
-															idx === 0 && styles.manageIconDisabled,
-														]}
-													>
-														↑
-													</Text>
-												</TouchableOpacity>
-												<TouchableOpacity
-													style={styles.manageBtn}
-													onPress={() => reorderStop(stop, "down")}
-													disabled={idx === stops.length - 1}
-													hitSlop={6}
-												>
-													<Text
-														style={[
-															styles.manageIcon,
-															idx === stops.length - 1 &&
-																styles.manageIconDisabled,
-														]}
-													>
-														↓
-													</Text>
-												</TouchableOpacity>
-											</>
+											<TouchableOpacity
+												style={styles.manageBtn}
+												onLongPress={() => {
+													Haptics.impactAsync(
+														Haptics.ImpactFeedbackStyle.Medium,
+													).catch(() => {});
+													drag();
+												}}
+												delayLongPress={150}
+												hitSlop={6}
+											>
+												<Text style={styles.manageIcon}>≡</Text>
+											</TouchableOpacity>
 										) : null}
 										<View style={{ flex: 1 }} />
 										{editable ? (
@@ -881,11 +1010,19 @@ export default function StopsScreen() {
 									</View>
 								) : null}
 							</Card>
-							</TouchableOpacity>
+								</TouchableOpacity>
+							</ScaleDecorator>
 						);
-					})}
-				</ScrollView>
+					}}
+				/>
 			)}
+
+			{/* Toast — floats above the list */}
+			{toast ? (
+				<View pointerEvents="none" style={styles.toast}>
+					<Text style={styles.toastText}>{toast}</Text>
+				</View>
+			) : null}
 
 			{/* Propose modal */}
 			<ProposeStopSheet
@@ -921,8 +1058,182 @@ export default function StopsScreen() {
 				}}
 				submitting={savingEdit}
 			/>
+
+			{/* ─── Stop detail sheet ─────────────────────────────────────────── */}
+			<Modal
+				visible={detailStop !== null}
+				animationType="slide"
+				transparent
+				onRequestClose={() => setDetailStop(null)}
+			>
+				<View style={styles.modalRoot}>
+					<TouchableOpacity
+						style={styles.modalBackdrop}
+						activeOpacity={1}
+						onPress={() => setDetailStop(null)}
+					/>
+					{detailStop ? (
+						<View style={styles.sheet}>
+							<View style={styles.sheetHandle} />
+							<View style={styles.sheetHeader}>
+								<Text style={styles.sheetTitle} numberOfLines={2}>
+									{STOP_ICON[detailStop.type]}  {detailStop.name}
+								</Text>
+								<TouchableOpacity
+									onPress={() => setDetailStop(null)}
+									hitSlop={12}
+								>
+									<Text style={styles.sheetClose}>✕</Text>
+								</TouchableOpacity>
+							</View>
+
+							<ScrollView contentContainerStyle={styles.sheetContent}>
+								{/* Mini-map preview */}
+								<View style={styles.detailMapWrap}>
+									<MapView
+										style={StyleSheet.absoluteFill}
+										provider={PROVIDER_DEFAULT}
+										initialRegion={{
+											latitude: detailStop.lat,
+											longitude: detailStop.lng,
+											latitudeDelta: 0.05,
+											longitudeDelta: 0.05,
+										}}
+										scrollEnabled={false}
+										zoomEnabled={false}
+										pitchEnabled={false}
+										rotateEnabled={false}
+									>
+										<Marker
+											coordinate={{
+												latitude: detailStop.lat,
+												longitude: detailStop.lng,
+											}}
+										/>
+									</MapView>
+								</View>
+
+								{/* Meta rows */}
+								<View style={styles.detailRow}>
+									<Text style={styles.detailLabel}>Type</Text>
+									<Text style={styles.detailValue}>
+										{STOP_TYPE_LABEL[detailStop.type]}
+									</Text>
+								</View>
+								<View style={styles.detailRow}>
+									<Text style={styles.detailLabel}>Duration</Text>
+									<Text style={styles.detailValue}>
+										{detailStop.duration_min} min
+									</Text>
+								</View>
+								<View style={styles.detailRow}>
+									<Text style={styles.detailLabel}>Status</Text>
+									<Text style={styles.detailValue}>
+										{STATUS_LABEL[detailStop.status]}
+									</Text>
+								</View>
+								<View style={styles.detailRow}>
+									<Text style={styles.detailLabel}>Distance from you</Text>
+									<Text style={styles.detailValue}>
+										{userPos
+											? formatDistance(
+													haversineKm(
+														{ lat: userPos.lat, lng: userPos.lng },
+														{
+															lat: detailStop.lat,
+															lng: detailStop.lng,
+														},
+													),
+												)
+											: "—"}
+									</Text>
+								</View>
+								<View style={styles.detailRow}>
+									<Text style={styles.detailLabel}>Coordinates</Text>
+									<Text style={styles.detailCoords}>
+										{detailStop.lat.toFixed(5)}, {detailStop.lng.toFixed(5)}
+									</Text>
+								</View>
+
+								{stripApprox(detailStop.notes) ? (
+									<View style={styles.detailNoteBox}>
+										<Text style={styles.detailLabel}>Notes</Text>
+										<Text style={styles.detailNote}>
+											{stripApprox(detailStop.notes)}
+										</Text>
+									</View>
+								) : null}
+
+								{/* Prominent warning for AI-placed stops we couldn't geocode */}
+								{isApproximate(detailStop.notes) ? (
+									<View style={styles.warningBox}>
+										<Text style={styles.warningTitle}>
+											📍 Approximate location
+										</Text>
+										<Text style={styles.warningBody}>
+											We couldn't pin this stop to a real place. The coordinates
+											are the AI's best guess and may be off by several kilometres.
+											Tap "Edit / fix location" to search Google for the exact spot.
+										</Text>
+									</View>
+								) : (
+									<Text style={styles.detailHint}>
+										Location looks off? Edit this stop and search the exact place
+										via Google to fix the coordinates.
+									</Text>
+								)}
+
+								{/* Actions */}
+								<View style={styles.detailActions}>
+									<Button
+										label="🧭  Navigate"
+										onPress={() => {
+											const stop = detailStop;
+											setDetailStop(null);
+											openNavigate(stop);
+										}}
+									/>
+									<Button
+										label="✏️  Edit / fix location"
+										variant="ghost"
+										onPress={() => {
+											const stop = detailStop;
+											setDetailStop(null);
+											setEditingStop(stop);
+										}}
+									/>
+								</View>
+							</ScrollView>
+						</View>
+					) : null}
+				</View>
+			</Modal>
 		</SafeAreaView>
 	);
+}
+
+// ─── Distance helpers ─────────────────────────────────────────────────────────
+function haversineKm(
+	a: { lat: number; lng: number },
+	b: { lat: number; lng: number },
+): number {
+	const toRad = (n: number) => (n * Math.PI) / 180;
+	const R = 6371;
+	const dLat = toRad(b.lat - a.lat);
+	const dLng = toRad(b.lng - a.lng);
+	const lat1 = toRad(a.lat);
+	const lat2 = toRad(b.lat);
+	const h =
+		Math.sin(dLat / 2) ** 2 +
+		Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+	return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function formatDistance(km: number): string {
+	if (!Number.isFinite(km)) return "Unknown";
+	if (km < 1) return `${Math.round(km * 1000)} m away`;
+	if (km < 10) return `${km.toFixed(1)} km away`;
+	return `${Math.round(km)} km away`;
 }
 
 // ── Vote button ─────────────────────────────────────────────────────────────
@@ -1447,6 +1758,38 @@ const styles = StyleSheet.create({
 	// ── Status-based card treatment ──────────────────────────────────────────
 	// (Left-border colour comes from STATUS_BORDER outside this StyleSheet.)
 	stopCardPassed: { opacity: 0.5 },
+	stopCardDragging: {
+		// Slight elevation bump so the dragged card feels like it lifts off.
+		shadowColor: "#000",
+		shadowOffset: { width: 0, height: 8 },
+		shadowOpacity: 0.18,
+		shadowRadius: 16,
+		elevation: 10,
+	},
+
+	// Arrival / drag feedback toast
+	toast: {
+		position: "absolute",
+		top: 80,
+		left: 24,
+		right: 24,
+		backgroundColor: "#1a1a1a",
+		borderRadius: 14,
+		paddingVertical: 12,
+		paddingHorizontal: 16,
+		alignItems: "center",
+		zIndex: 999,
+		shadowColor: "#000",
+		shadowOffset: { width: 0, height: 4 },
+		shadowOpacity: 0.2,
+		shadowRadius: 12,
+		elevation: 8,
+	},
+	toastText: {
+		color: "#fff",
+		fontSize: 14,
+		fontWeight: FontWeight.medium,
+	},
 	stopNameStrike: { textDecorationLine: "line-through" },
 	stopNote: {
 		fontSize: FontSize.xs,
@@ -1528,6 +1871,107 @@ const styles = StyleSheet.create({
 		padding: Spacing.xl,
 		paddingTop: 0,
 		paddingBottom: Spacing.xxl,
+	},
+
+	// Stop detail sheet
+	detailMapWrap: {
+		height: 180,
+		borderRadius: Radius.lg,
+		overflow: "hidden",
+		backgroundColor: Colors.bgCard,
+		marginBottom: Spacing.lg,
+	},
+	detailRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+		paddingVertical: Spacing.sm,
+		borderBottomWidth: 1,
+		borderBottomColor: Colors.borderSubtle,
+		gap: Spacing.md,
+	},
+	detailLabel: {
+		fontSize: FontSize.sm,
+		color: Colors.textMuted,
+		fontWeight: FontWeight.medium,
+	},
+	detailValue: {
+		flex: 1,
+		textAlign: "right",
+		fontSize: FontSize.md,
+		color: Colors.textPrimary,
+		fontWeight: FontWeight.semibold,
+	},
+	detailCoords: {
+		flex: 1,
+		textAlign: "right",
+		fontSize: FontSize.sm,
+		color: Colors.textSecondary,
+		fontWeight: FontWeight.regular,
+	},
+	detailNoteBox: {
+		marginTop: Spacing.md,
+		padding: Spacing.md,
+		borderRadius: Radius.md,
+		backgroundColor: Colors.bgCard,
+	},
+	detailNote: {
+		marginTop: 4,
+		fontSize: FontSize.md,
+		color: Colors.textPrimary,
+		fontWeight: FontWeight.regular,
+		lineHeight: 22,
+	},
+	detailHint: {
+		marginTop: Spacing.lg,
+		fontSize: FontSize.xs,
+		color: Colors.textMuted,
+		fontStyle: "italic",
+		fontWeight: FontWeight.regular,
+		lineHeight: 16,
+		textAlign: "center",
+	},
+
+	// Inline "approximate location" badge under the stop title (list view)
+	approxBadge: {
+		alignSelf: "flex-start",
+		marginTop: 4,
+		backgroundColor: "rgba(217,119,6,0.12)",
+		borderRadius: Radius.full,
+		paddingHorizontal: 8,
+		paddingVertical: 2,
+	},
+	approxBadgeText: {
+		fontSize: 10,
+		fontWeight: FontWeight.semibold,
+		color: Colors.warning,
+		letterSpacing: 0.3,
+	},
+
+	// Prominent warning box inside the detail sheet
+	warningBox: {
+		marginTop: Spacing.lg,
+		backgroundColor: "rgba(217,119,6,0.10)",
+		borderLeftWidth: 3,
+		borderLeftColor: Colors.warning,
+		borderRadius: Radius.md,
+		padding: Spacing.md,
+	},
+	warningTitle: {
+		fontSize: FontSize.sm,
+		fontWeight: FontWeight.semibold,
+		color: Colors.warning,
+		marginBottom: 4,
+	},
+	warningBody: {
+		fontSize: FontSize.sm,
+		color: Colors.textPrimary,
+		fontWeight: FontWeight.regular,
+		lineHeight: 20,
+	},
+	detailActions: {
+		marginTop: Spacing.lg,
+		gap: Spacing.sm,
 	},
 
 	// Form fields

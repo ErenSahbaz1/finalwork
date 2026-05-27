@@ -8,6 +8,7 @@ import {
 	LogBox,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import {
 	Stack,
 	useRouter,
@@ -202,7 +203,7 @@ export default function RootLayout() {
 	}
 
 	return (
-		<>
+		<GestureHandlerRootView style={{ flex: 1 }}>
 			<StatusBar style="dark" />
 			<Stack
 				screenOptions={{
@@ -235,7 +236,7 @@ export default function RootLayout() {
 				<Stack.Screen name="plan/results" />
 				<Stack.Screen name="settings/index" />
 			</Stack>
-		</>
+		</GestureHandlerRootView>
 	);
 }
 

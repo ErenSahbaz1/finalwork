@@ -8,6 +8,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import { askGemini, parseGeminiJson } from "./gemini";
+import { APPROX_PREFIX, findPlaceNear } from "./places";
 import type {
 	AiSuggestion,
 	GeneratedRoute,
@@ -29,18 +30,36 @@ export async function getAiSuggestions(args: {
 	const { origin, destination, tripDays, carCount, stopTypes } = args;
 	const prompt = `The user is planning a road trip from ${origin.name} to ${destination.name} over ${tripDays} days with ${carCount} cars. They want ${stopTypes.join(", ")} stops.
 Suggest 6 interesting must-see places, landmarks, or experiences along the way between these two cities.
-For each place provide: name, brief reason (1 sentence), approximate lat/lng coordinates.
-Respond in JSON only:
-[{"name": "...", "reason": "...", "lat": 0, "lng": 0}]`;
+
+CRITICAL: Each "name" must be a SPECIFIC real place that can be found on Google Maps — a named museum, monument, viewpoint, restaurant, beach, park, etc. Do NOT use city names alone (e.g. "Tours" or "Amsterdam"). Use the full proper name as it appears on Google Maps (e.g. "Rijksmuseum, Amsterdam" or "Cathédrale Saint-Gatien de Tours"). Include the city in the name so it's unambiguous.
+
+For each place provide: name (specific establishment), reason (one short sentence), approximate lat/lng coordinates.
+
+Respond in JSON only, as an object with a "places" array:
+{"places": [{"name": "...", "reason": "...", "lat": 0, "lng": 0}]}`;
 
 	const raw = await askGemini(prompt, { json: true });
 	const parsed = parseGeminiJson<unknown>(raw);
 
-	if (!Array.isArray(parsed)) {
-		throw new Error("Gemini returned an unexpected shape for suggestions.");
+	// Strict JSON mode forces the model to return an object (not a bare array),
+	// so the prompt wraps the list in `{"places": [...]}`. Be permissive about
+	// the wrapper key — accept any common synonym, and also accept a raw array
+	// in case the model ignores the wrapper.
+	const list: unknown[] = Array.isArray(parsed)
+		? parsed
+		: Array.isArray((parsed as any)?.places)
+			? (parsed as any).places
+			: Array.isArray((parsed as any)?.suggestions)
+				? (parsed as any).suggestions
+				: Array.isArray((parsed as any)?.results)
+					? (parsed as any).results
+					: [];
+
+	if (list.length === 0) {
+		throw new Error("AI returned no suggestions. Try again.");
 	}
 
-	return parsed
+	const rough = list
 		.map((row: any) => ({
 			name: String(row?.name ?? "").trim(),
 			reason: String(row?.reason ?? "").trim(),
@@ -48,6 +67,26 @@ Respond in JSON only:
 			lng: Number(row?.lng) || 0,
 		}))
 		.filter((p) => p.name && (p.lat !== 0 || p.lng !== 0));
+
+	// Resolve each suggestion to real Google Places coordinates, biased to
+	// the AI's rough position. Failures fall back to the AI's value silently
+	// — the must-see list isn't shown to convoy members directly, so a small
+	// drift here is acceptable.
+	const enriched = await Promise.all(
+		rough.map(async (p) => {
+			// Must-see items are always sightseeing-ish — bias accordingly.
+			const hit = await findPlaceNear(
+				p.name,
+				{ lat: p.lat, lng: p.lng },
+				"sightseeing",
+			);
+			return hit && hit.isEstablishment
+				? { ...p, lat: hit.lat, lng: hit.lng }
+				: p;
+		}),
+	);
+
+	return enriched;
 }
 
 // ─── Results: 3 day-by-day routes ─────────────────────────────────────────────
@@ -115,7 +154,17 @@ Generate 3 routes:
 3. SCENIC - more stops, interesting places, relaxed pace
 
 For each route provide a complete day-by-day stop plan.
-Each stop needs: name, type (one of: fuel, food, rest, sightseeing, overnight, shopping), lat, lng, duration_min, notes, isOvernight (boolean), hotelName (if overnight hotel), hotelStars (1-5 if hotel), estimatedCost (EUR, optional).
+
+CRITICAL RULE FOR STOP NAMES:
+Each "name" must be a SPECIFIC real establishment that exists on Google Maps. NEVER use a bare city name. Always include the establishment type and the city.
+  • Fuel stop → name a real chain + location, e.g. "Total E19 Nivelles" or "Shell Autobahn A8 Karlsruhe"
+  • Food stop → name a real restaurant, e.g. "Au Pied de Cochon, Paris" — not just "Paris"
+  • Rest stop → name the specific rest area / aire, e.g. "Aire de Beaune-Tailly A6"
+  • Sightseeing → name the actual landmark, e.g. "Schönbrunn Palace, Vienna" — not just "Vienna"
+  • Overnight → name a real hotel, e.g. "Hilton Budapest, Buda Castle District" — not just "Budapest"
+  • Shopping → name a real mall / market, e.g. "Mall of Berlin"
+
+Each stop needs: name (specific establishment per the rule above), type (one of: fuel, food, rest, sightseeing, overnight, shopping), lat, lng, duration_min, notes, isOvernight (boolean), hotelName (if overnight hotel), hotelStars (1-5 if hotel), estimatedCost (EUR, optional).
 
 Also provide: totalKm, fuelCostEstimate (per car, based on 7L/100km average and the fuel prices above).
 
@@ -150,10 +199,10 @@ Respond in JSON only, no other text:
 	const parsed = parseGeminiJson<{ routes?: any[] }>(raw);
 
 	if (!parsed?.routes || !Array.isArray(parsed.routes)) {
-		throw new Error("Gemini returned an unexpected shape for routes.");
+		throw new Error("AI returned an unexpected shape for routes.");
 	}
 
-	return parsed.routes.map((r: any, idx: number) => ({
+	const routes: GeneratedRoute[] = parsed.routes.map((r: any, idx: number) => ({
 		id: `route-${idx}-${Date.now()}`,
 		type: (r.type ?? "balanced") as GeneratedRoute["type"],
 		title: String(r.title ?? "Route"),
@@ -162,6 +211,54 @@ Respond in JSON only, no other text:
 		fuelCostEstimate: Number(r.fuelCostEstimate) || 0,
 		stops: Array.isArray(r.stops) ? r.stops.map(normalizeStop) : [],
 	}));
+
+	// ── Geocode every AI-generated stop in parallel ──────────────────────────
+	// Gemini's lat/lng are guesses — accurate to within a city, but rarely on
+	// any actual establishment. We replace them with real Places coordinates
+	// before the route is shown to the user. When a stop can't be resolved we
+	// keep the AI's coordinates and prepend `[~] ` to its notes, which the
+	// Stops UI uses to render an "approximate location" warning badge.
+	// Wall-clock cap on the whole geocoding phase so a flaky Places network
+	// can't strand the user on the "ConvoyAI is planning…" screen forever.
+	// Anything still in flight when this fires is dropped — the stops keep
+	// the AI's coordinates and get flagged approximate.
+	const HARD_CAP_MS = 15_000;
+	const enrichOne = async (stop: PlannedStop) => {
+		const hasBias =
+			Number.isFinite(stop.lat) &&
+			Number.isFinite(stop.lng) &&
+			!(stop.lat === 0 && stop.lng === 0);
+		const bias = hasBias ? { lat: stop.lat, lng: stop.lng } : undefined;
+		try {
+			// Pass the stop's type as a category hint so "Amsterdam" + "overnight"
+			// becomes a hotel search instead of a city-centre pin.
+			const hit = await findPlaceNear(stop.name, bias, stop.type);
+			if (hit && hit.isEstablishment) {
+				stop.lat = hit.lat;
+				stop.lng = hit.lng;
+				return;
+			}
+			if (hit) {
+				stop.lat = hit.lat;
+				stop.lng = hit.lng;
+			}
+		} catch {
+			// fall through to approximate-flag path
+		}
+		const existing = stop.notes ?? "";
+		stop.notes = existing.startsWith(APPROX_PREFIX)
+			? existing
+			: `${APPROX_PREFIX}${existing || "AI-placed (approximate location)"}`;
+	};
+
+	await Promise.race([
+		Promise.all(
+			routes.flatMap((route) => route.stops.map((s) => enrichOne(s))),
+		),
+		new Promise((resolve) => setTimeout(resolve, HARD_CAP_MS)),
+	]);
+
+	return routes;
 }
 
 function normalizeStop(s: any): PlannedStop {
