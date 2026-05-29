@@ -563,15 +563,30 @@ export default function StopsScreen() {
 
 	function openNavigate(stop: Stop) {
 		// Use the stop's coordinates as the destination, not the user's location.
-		// Google's `dir/?api=1&destination=...&travelmode=driving` deep link
-		// starts turn-by-turn directions from wherever the user currently is.
+		// "Navigate in Convoi" launches the in-app turn-by-turn screen; the
+		// external Google Maps / Waze paths use deep links so the OS app opens
+		// at the stop with directions ready to start from current location.
 		const lat = stop.lat;
 		const lng = stop.lng;
 		const gmaps = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
 		const waze = `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`;
 		const openUrl = (url: string) => Linking.openURL(url).catch(() => {});
 
-		Alert.alert("Navigate with", "Choose your navigation app", [
+		Alert.alert(`Navigate to ${stop.name}`, "Choose navigation", [
+			{
+				text: "Navigate in Convoi",
+				onPress: () =>
+					router.push({
+						pathname: "/convoy/[id]/navigate",
+						params: {
+							id,
+							stopId: stop.id,
+							stopName: stop.name,
+							stopLat: String(stop.lat),
+							stopLng: String(stop.lng),
+						},
+					}),
+			},
 			{ text: "Google Maps", onPress: () => openUrl(gmaps) },
 			{ text: "Waze", onPress: () => openUrl(waze) },
 			{ text: "Cancel", style: "cancel" },

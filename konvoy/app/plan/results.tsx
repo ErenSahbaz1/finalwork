@@ -199,28 +199,39 @@ export default function PlanResults() {
 			// NULL for lat/lng and would otherwise reject the entire batch,
 			// stranding the user on the "Creating your convoy…" spinner.
 			if (route.stops.length > 0) {
-				const rows = route.stops
+				// Sort planner stops by (day, order) so the resulting order_index
+				// matches the chronological flow the wizard built.
+				const ordered = [...route.stops]
 					.filter(
 						(s) =>
 							Number.isFinite(s.lat) &&
 							Number.isFinite(s.lng) &&
 							!(s.lat === 0 && s.lng === 0),
 					)
-					.map((s) => ({
-						convoy_id: convoy.id,
-						proposed_by: member.id,
-						// Map planner types to DB stop types — "shopping" isn't in
-						// the DB CHECK enum, so it falls back to "sightseeing".
-						type: s.type === "shopping" ? "sightseeing" : s.type,
-						name: s.name,
-						lat: s.lat,
-						lng: s.lng,
-						duration_min: s.duration_min,
-						// Carry through the AI's notes (including the "[~] " approx
-						// marker) so the Stops UI can surface the warning badge.
-						notes: s.notes ?? null,
-						status: "confirmed",
-					}));
+					.sort((a, b) => {
+						if (a.day !== b.day) return a.day - b.day;
+						return (a.order ?? 0) - (b.order ?? 0);
+					});
+
+				const rows = ordered.map((s, idx) => ({
+					convoy_id: convoy.id,
+					proposed_by: member.id,
+					// Map planner types to DB stop types — "shopping" isn't in
+					// the DB CHECK enum, so it falls back to "sightseeing".
+					type: s.type === "shopping" ? "sightseeing" : s.type,
+					name: s.name,
+					lat: s.lat,
+					lng: s.lng,
+					duration_min: s.duration_min,
+					// Carry through the AI's notes (including the "[~] " approx
+					// marker) so the Stops UI can surface the warning badge.
+					notes: s.notes ?? null,
+					status: "confirmed",
+					// Critical: without an explicit order_index the bulk insert
+					// would leave every row at the DB default (0), making the
+					// "next stop" selection non-deterministic.
+					order_index: idx,
+				}));
 				if (rows.length > 0) {
 					const { error: stopsErr } = await supabase
 						.from("stops")

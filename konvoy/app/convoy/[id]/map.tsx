@@ -228,32 +228,14 @@ export default function ConvoyMapScreen() {
 				return;
 			}
 
-			// 2. Find which of these the current user has already marked arrived,
-			//    so the panel can skip past them even if the leader hasn't yet
-			//    flipped the stop to `passed`.
-			const myMemberId = myMemberIdRef.current;
-			let arrivedStopIds = new Set<string>();
-			if (myMemberId) {
-				const { data: myArrivals } = await supabase
-					.from("stop_arrivals")
-					.select("stop_id")
-					.eq("convoy_member_id", myMemberId)
-					.in(
-						"stop_id",
-						stops.map((s) => s.id),
-					);
-				arrivedStopIds = new Set(
-					(myArrivals ?? []).map((a: any) => a.stop_id as string),
-				);
-			}
-
-			// 3. Pick the first stop in route order the user hasn't touched yet.
+			// Pick the first stop in route order that is still open. We intentionally
+			// do NOT skip stops the current user has personally marked arrived —
+			// the bottom panel must keep pointing at the current stop until the
+			// whole group is there. Stops.tsx flips a stop to `passed` only once
+			// every member has an arrival row, which is the signal we trust here.
 			const next =
 				stops.find(
-					(s) =>
-						s.status !== "passed" &&
-						s.status !== "cancelled" &&
-						!arrivedStopIds.has(s.id),
+					(s) => s.status !== "passed" && s.status !== "cancelled",
 				) ?? null;
 
 			if (cancelled) return;
@@ -636,20 +618,25 @@ export default function ConvoyMapScreen() {
 		toastColor: string = "#1a1a1a",
 	) {
 		if (statusCooldown) return;
-		const memberId = myMemberIdRef.current;
-		if (!memberId) {
-			showToast("Couldn't send — you're not a convoy member.", "#dc2626");
-			return;
-		}
 
 		setActiveStatus(type);
 		setStatusCooldown(true);
 
 		try {
 			await insertStatusEvent(type, note);
+			// Local tactile + visual confirmation. Other members get the same
+			// signal via the realtime status_events subscription.
+			Haptics.impactAsync(
+				type === "emergency_stop"
+					? Haptics.ImpactFeedbackStyle.Heavy
+					: Haptics.ImpactFeedbackStyle.Medium,
+			).catch(() => {});
 			showToast(label, toastColor);
-		} catch {
-			showToast("Couldn't send your status. Try again.", "#dc2626");
+		} catch (e: any) {
+			showToast(
+				e?.message ?? "Couldn't send your status. Try again.",
+				"#dc2626",
+			);
 		}
 
 		// 10s cooldown to prevent spam-tapping
