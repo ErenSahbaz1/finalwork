@@ -557,7 +557,7 @@ const styles = StyleSheet.create({
 		borderRadius: Radius.full,
 	},
 	selectedPillText: {
-		color: Colors.bgElevated,
+		color: "#ffffff",
 		fontSize: FontSize.xs,
 		fontWeight: FontWeight.semibold,
 		letterSpacing: 0.6,

@@ -8,12 +8,19 @@ import {
 	TouchableOpacity,
 	ScrollView,
 	useWindowDimensions,
+	StatusBar,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { FadeInView } from "../../src/components/FadeInView";
 import { SoftBackground } from "../../src/components/SoftBackground";
 import { StaggeredFadeIn } from "../../src/components/StaggeredFadeIn";
-import { Colors } from "../../src/constants/theme";
+import {
+	Colors,
+	Spacing,
+	FontSize,
+	Radius,
+	Shadows,
+} from "../../src/constants/theme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { VehicleType } from "../../src/types";
 import { supabase } from "../../src/lib/supabase";
@@ -54,7 +61,6 @@ export default function ProfileScreen() {
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState("");
 
-	// Two chips per row, accounting for outer padding (24 × 2) + gap between
 	const chipWidth = (screenWidth - SCREEN_PADDING * 2 - CHIP_GAP) / 2;
 
 	async function handleContinue() {
@@ -82,6 +88,7 @@ export default function ProfileScreen() {
 
 	return (
 		<SafeAreaView style={styles.safe}>
+			<StatusBar barStyle="light-content" backgroundColor={Colors.bg} />
 			<SoftBackground />
 			<FadeInView style={styles.flex}>
 				<ScrollView
@@ -91,31 +98,29 @@ export default function ProfileScreen() {
 				>
 					{/* Progress dots */}
 					<View style={styles.dots}>
-						<View style={[styles.dot, styles.dotDone]} />
-						<View style={[styles.dot, styles.dotDone]} />
-						<View style={[styles.dot, styles.dotActive]} />
-						<View style={styles.dot} />
+						<View style={styles.dotDone} />
+						<View style={styles.dotDone} />
+						<View style={styles.dotPill} />
+						<View style={styles.dotInactive} />
 					</View>
 
-					{/* Title */}
 					<Text style={styles.title}>Who's driving?</Text>
-					<Text style={styles.sub}>
-						Shown on the convoy map. No account needed.
-					</Text>
+					<Text style={styles.sub}>Shown on the convoy map. No account needed.</Text>
 
-					{/* Name input */}
 					<TextInput
 						style={styles.nameInput}
 						value={name}
 						onChangeText={setName}
 						placeholder="Your name"
-						placeholderTextColor="#bbb"
+						placeholderTextColor={Colors.textMuted}
 						autoFocus
 						maxLength={32}
+						selectionColor={Colors.primary}
 					/>
 
 					{/* Vehicle type — 2×2 grid */}
 					<View style={styles.section}>
+						<Text style={styles.sectionLabel}>Vehicle type</Text>
 						<View style={styles.vehicleGrid}>
 							{VEHICLE_OPTIONS.map((opt, i) => {
 								const selected = vehicleType === opt.type;
@@ -128,6 +133,7 @@ export default function ProfileScreen() {
 												styles.vehicleChip,
 												{ width: chipWidth },
 												selected && styles.vehicleChipSel,
+												selected && Shadows.glowSm,
 											]}
 										>
 											<Text style={styles.vehicleIcon}>{opt.icon}</Text>
@@ -149,6 +155,7 @@ export default function ProfileScreen() {
 
 					{/* Color picker */}
 					<View style={styles.section}>
+						<Text style={styles.sectionLabel}>Your color</Text>
 						<View style={styles.swatchesRow}>
 							{VEHICLE_COLORS.map((c) => {
 								const selected = color === c;
@@ -160,19 +167,19 @@ export default function ProfileScreen() {
 										hitSlop={6}
 										style={[
 											styles.swatchOuter,
-											{
-												borderColor: selected ? "#1a1a1a" : "transparent",
-											},
+											{ borderColor: selected ? Colors.primary : "transparent" },
 										]}
 									>
 										<View
 											style={[
 												styles.swatch,
-												{
-													backgroundColor: c,
-													borderColor: selected ? "#fff" : "transparent",
-													shadowColor: selected ? c : "#000",
-													shadowOpacity: selected ? 0.5 : 0.1,
+												{ backgroundColor: c },
+												selected && {
+													shadowColor: c,
+													shadowOffset: { width: 0, height: 0 },
+													shadowOpacity: 0.7,
+													shadowRadius: 8,
+													elevation: 6,
 												},
 											]}
 										/>
@@ -182,20 +189,19 @@ export default function ProfileScreen() {
 						</View>
 					</View>
 
-					{/* Error */}
 					{error ? (
 						<View style={styles.errorBox}>
 							<Text style={styles.errorText}>{error}</Text>
 						</View>
 					) : null}
 
-					{/* Continue button */}
 					<TouchableOpacity
 						onPress={handleContinue}
 						disabled={!canContinue || saving}
 						activeOpacity={0.85}
 						style={[
 							styles.continueBtn,
+							Shadows.glow,
 							(!canContinue || saving) && styles.continueBtnDisabled,
 						]}
 					>
@@ -209,24 +215,11 @@ export default function ProfileScreen() {
 	);
 }
 
-// Reusable subtle drop shadow for the inputs/chips
-const shadowSm = {
-	shadowColor: "#000",
-	shadowOffset: { width: 0, height: 2 },
-	shadowOpacity: 0.06,
-	shadowRadius: 6,
-	elevation: 2,
-};
-
 const styles = StyleSheet.create({
 	safe: { flex: 1, backgroundColor: Colors.bg },
 	flex: { flex: 1 },
-	container: {
-		padding: SCREEN_PADDING,
-		paddingBottom: 48,
-	},
+	container: { padding: SCREEN_PADDING, paddingBottom: 48 },
 
-	// ── Progress dots ────────────────────────────────────────────────────────
 	dots: {
 		flexDirection: "row",
 		justifyContent: "center",
@@ -234,45 +227,46 @@ const styles = StyleSheet.create({
 		gap: 6,
 		marginBottom: 32,
 	},
-	dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#ddd" },
-	dotDone: { backgroundColor: "#1a1a1a" },
-	dotActive: {
-		width: 24,
-		height: 8,
-		borderRadius: 4,
-		backgroundColor: "#1a1a1a",
-	},
+	dotDone: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.primary },
+	dotPill: { width: 24, height: 6, borderRadius: 3, backgroundColor: Colors.primary },
+	dotInactive: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#1a1a1a" },
 
-	// ── Title ────────────────────────────────────────────────────────────────
 	title: {
 		fontSize: 30,
-		fontWeight: "300",
-		color: "#1a1a1a",
+		fontWeight: "700",
+		color: Colors.textPrimary,
 		marginBottom: 6,
 		letterSpacing: -0.5,
 	},
 	sub: {
-		fontSize: 15,
-		color: "#999",
-		marginBottom: 32,
+		fontSize: FontSize.md,
+		color: Colors.textMuted,
+		marginBottom: 28,
 		lineHeight: 22,
 	},
 
-	// ── Name input ───────────────────────────────────────────────────────────
 	nameInput: {
 		height: 56,
-		borderRadius: 16,
-		backgroundColor: "#fff",
+		borderRadius: Radius.md,
+		backgroundColor: Colors.bgElevated,
 		paddingHorizontal: 18,
 		fontSize: 17,
-		color: "#1a1a1a",
+		color: Colors.textPrimary,
 		fontWeight: "400",
-		...shadowSm,
+		borderWidth: 1,
+		borderColor: Colors.border,
 	},
 
 	section: { marginTop: 28 },
+	sectionLabel: {
+		fontSize: 10,
+		fontWeight: "600",
+		color: Colors.textMuted,
+		letterSpacing: 1.5,
+		textTransform: "uppercase",
+		marginBottom: 12,
+	},
 
-	// ── Vehicle 2×2 grid ─────────────────────────────────────────────────────
 	vehicleGrid: {
 		flexDirection: "row",
 		flexWrap: "wrap",
@@ -280,30 +274,28 @@ const styles = StyleSheet.create({
 	},
 	vehicleChip: {
 		height: 72,
-		borderRadius: 16,
-		backgroundColor: "#fff",
+		borderRadius: Radius.md,
+		backgroundColor: Colors.bgCard,
 		flexDirection: "row",
 		alignItems: "center",
 		gap: 12,
 		paddingHorizontal: 16,
-		borderWidth: 2,
-		borderColor: "transparent",
-		...shadowSm,
+		borderWidth: 1,
+		borderColor: Colors.border,
 	},
 	vehicleChipSel: {
-		backgroundColor: "#1a1a1a",
-		borderColor: "#1a1a1a",
+		backgroundColor: Colors.bgAccent,
+		borderColor: Colors.borderAccent,
 	},
 	vehicleIcon: { fontSize: 24 },
 	vehicleLabel: {
-		fontSize: 15,
+		fontSize: FontSize.md,
 		fontWeight: "500",
-		color: "#1a1a1a",
+		color: Colors.textSecondary,
 		flexShrink: 1,
 	},
-	vehicleLabelSel: { color: "#fff", fontWeight: "600" },
+	vehicleLabelSel: { color: Colors.primary, fontWeight: "600" },
 
-	// ── Color swatches ───────────────────────────────────────────────────────
 	swatchesRow: {
 		flexDirection: "row",
 		justifyContent: "center",
@@ -319,27 +311,23 @@ const styles = StyleSheet.create({
 		width: 44,
 		height: 44,
 		borderRadius: 22,
-		borderWidth: 3,
-		shadowOffset: { width: 0, height: 2 },
-		shadowRadius: 6,
-		elevation: 3,
 	},
 
-	// ── Error ────────────────────────────────────────────────────────────────
 	errorBox: {
-		marginTop: 28,
-		backgroundColor: "rgba(220,38,38,0.08)",
-		borderRadius: 12,
+		marginTop: 20,
+		backgroundColor: Colors.bgAccent,
+		borderRadius: Radius.md,
 		padding: 12,
+		borderWidth: 1,
+		borderColor: Colors.borderAccent,
 	},
-	errorText: { fontSize: 14, color: Colors.danger, fontWeight: "500" },
+	errorText: { fontSize: FontSize.sm, color: Colors.danger, fontWeight: "500" },
 
-	// ── Continue ─────────────────────────────────────────────────────────────
 	continueBtn: {
 		marginTop: 32,
 		height: 56,
-		borderRadius: 28,
-		backgroundColor: "#1a1a1a",
+		borderRadius: Radius.lg,
+		backgroundColor: Colors.primary,
 		alignItems: "center",
 		justifyContent: "center",
 	},

@@ -1,23 +1,26 @@
-// ─── In-app turn-by-turn navigation (Waze / Google Maps style) ────────────────
-// Dark 3D-tilted map, heading-up rotation, large dark instruction banner at the
-// top, "Then …" secondary pill, current-speed circle, dark bottom bar with
-// time/distance/ETA + Exit / I-arrived actions.
+// ─── In-app turn-by-turn navigation — TomTom powered ──────────────────────────
 //
-// Cost-saving:
-//   • The Directions API call is gated by a `routeFetched` ref so it never
-//     runs more than once per navigation session, even if the screen
-//     re-mounts or location seeds twice.
-//   • The screen is only mounted when the user explicitly taps "Navigate in
-//     Convoi" from the Stops alert — no background fetches.
-//   • In __DEV__ a session-scoped counter logs every API call so spend is
-//     visible at a glance.
+// APIs used:
+//   • Routing API v1          — route geometry + turn-by-turn instructions
+//                               (traffic=true gives real-time delay in summary)
+//   • Map Display API         — night raster tiles via UrlTile (mapType="none")
+//   • Traffic Flow API v4     — relative-flow tile overlay (green→red)
 //
-// Graceful no-key fallback: if EXPO_PUBLIC_GOOGLE_MAPS_KEY isn't set OR the
-// Directions call fails, we open the external Google Maps deeplink and
-// router.back() out of the screen.
+// Cost notes:
+//   • routeFetched ref ensures one Routing call per session regardless of
+//     re-mounts or double-seeded location effects.
+//   • Snap-to-road is done locally against the route polyline — calling the
+//     TomTom Snap to Roads API on every GPS tick would be too expensive.
+//   • Map/traffic tiles are browser-cached by the OS WebView layer.
 // ──────────────────────────────────────────────────────────────────────────────
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import {
 	View,
 	Text,
@@ -26,13 +29,8 @@ import {
 	ActivityIndicator,
 	Alert,
 	Linking,
-	Platform,
 } from "react-native";
-import MapView, {
-	Marker,
-	Polyline,
-	PROVIDER_GOOGLE,
-} from "react-native-maps";
+import MapView, { Marker, Polyline, UrlTile } from "react-native-maps";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
 import { StatusBar } from "expo-status-bar";
@@ -40,86 +38,72 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "../../../src/lib/supabase";
 import { useUserStore } from "../../../src/store/userStore";
 
-const MAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY ?? "";
-const NAV_BLUE = "#4AADFF";
-const NAV_BLUE_OUTLINE = "#1a6ab5";
+const TOMTOM_KEY = process.env.EXPO_PUBLIC_TOMTOM_KEY ?? "";
 
-// Minimal navigation map style — removes POIs, transit, neighborhood labels,
-// and most road label icons so the screen stays clean during driving and only
-// the roads + route polyline read at a glance.
-const NAVIGATION_MAP_STYLE = [
-	{ featureType: "poi", stylers: [{ visibility: "off" }] },
-	{ featureType: "poi.park", stylers: [{ visibility: "simplified" }] },
-	{ featureType: "transit", stylers: [{ visibility: "off" }] },
-	{
-		featureType: "landscape.man_made",
-		stylers: [{ visibility: "simplified" }],
-	},
-	{
-		featureType: "road",
-		elementType: "labels.icon",
-		stylers: [{ visibility: "off" }],
-	},
-	{
-		featureType: "road.local",
-		elementType: "labels",
-		stylers: [{ visibility: "simplified" }],
-	},
-	{
-		featureType: "administrative.neighborhood",
-		stylers: [{ visibility: "off" }],
-	},
-];
+// TomTom Map Display API — night style
+// https://developer.tomtom.com/map-display-api/documentation/raster/tile
+const TILE_URL = `https://api.tomtom.com/map/1/tile/basic/night/{z}/{x}/{y}.png?key=${TOMTOM_KEY}&language=en-GB`;
+
+// TomTom Traffic Flow API — relative flow (green free-flow → red congested)
+// https://developer.tomtom.com/traffic-api/documentation/traffic-flow/raster-flow-tiles
+const TRAFFIC_TILE_URL = `https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`;
+
+const NAV_RED = "#dc2626";
+const NAV_RED_OUTLINE = "#7f1d1d";
 
 interface LatLng {
 	latitude: number;
 	longitude: number;
 }
 
-interface NavigationStep {
-	instruction: string;
-	distance: string;
+interface NavInstruction {
+	message: string;
 	maneuver: string;
-	endLat: number;
-	endLng: number;
+	point: LatLng;
+	routeOffsetInMeters: number;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── TomTom maneuver → arrow ─────────────────────────────────────────────────
 
 function getManeuverArrow(maneuver: string): string {
-	const arrows: Record<string, string> = {
-		"turn-left": "←",
-		"turn-right": "→",
-		"turn-slight-left": "↖",
-		"turn-slight-right": "↗",
-		"turn-sharp-left": "↙",
-		"turn-sharp-right": "↘",
-		"uturn-left": "↺",
-		"uturn-right": "↻",
-		"roundabout-left": "↺",
-		"roundabout-right": "↻",
-		merge: "↑",
-		"fork-left": "↖",
-		"fork-right": "↗",
-		"ramp-left": "↖",
-		"ramp-right": "↗",
-		straight: "↑",
-		"keep-left": "↖",
-		"keep-right": "↗",
+	const map: Record<string, string> = {
+		DEPART: "↑",
+		ARRIVE: "⬤",
+		STRAIGHT: "↑",
+		FOLLOW: "↑",
+		KEEP_RIGHT: "↗",
+		KEEP_LEFT: "↖",
+		BEAR_RIGHT: "↗",
+		BEAR_LEFT: "↖",
+		TURN_RIGHT: "→",
+		TURN_LEFT: "←",
+		SHARP_RIGHT: "↘",
+		SHARP_LEFT: "↙",
+		UTURN_RIGHT: "↻",
+		UTURN_LEFT: "↺",
+		MOTORWAY_ENTER_LEFT: "↖",
+		MOTORWAY_ENTER_RIGHT: "↗",
+		MOTORWAY_EXIT_LEFT: "↙",
+		MOTORWAY_EXIT_RIGHT: "↘",
+		ROUNDABOUT_LEFT: "↺",
+		ROUNDABOUT_RIGHT: "↻",
+		TAKE_FERRY: "⛴",
 	};
-	return arrows[maneuver] ?? "↑";
+	return map[maneuver] ?? "↑";
 }
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function haversineKm(a: LatLng, b: LatLng): number {
 	const toRad = (n: number) => (n * Math.PI) / 180;
 	const R = 6371;
 	const dLat = toRad(b.latitude - a.latitude);
 	const dLng = toRad(b.longitude - a.longitude);
-	const lat1 = toRad(a.latitude);
-	const lat2 = toRad(b.latitude);
 	const h =
 		Math.sin(dLat / 2) ** 2 +
-		Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+		Math.sin(dLng / 2) ** 2 *
+			Math.cos(toRad(a.latitude)) *
+			Math.cos(toRad(b.latitude));
 	return 2 * R * Math.asin(Math.sqrt(h));
 }
 
@@ -136,88 +120,44 @@ function formatDuration(seconds: number): string {
 	if (mins < 60) return `${mins} min`;
 	const h = Math.floor(mins / 60);
 	const m = mins % 60;
-	return m > 0 ? `${h}h ${m}min` : `${h}h`;
+	return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 function getArrivalTime(seconds: number): string {
 	if (!Number.isFinite(seconds)) return "—";
-	const arrival = new Date(Date.now() + seconds * 1000);
-	return arrival.toLocaleTimeString([], {
+	return new Date(Date.now() + seconds * 1000).toLocaleTimeString([], {
 		hour: "2-digit",
 		minute: "2-digit",
 	});
 }
 
-// Cheap road-snapping: project the raw GPS onto the nearest segment of the
-// route polyline so the arrow tracks the line cleanly instead of wandering
-// off into adjacent buildings. Only snaps if within ~100 m of the route —
-// further than that and we treat it as "user went off route" and return raw
-// GPS, so off-route states still surface correctly.
-function snapToRoute(
-	userLat: number,
-	userLng: number,
-	routePoints: LatLng[],
-): LatLng {
-	if (routePoints.length === 0) {
-		return { latitude: userLat, longitude: userLng };
-	}
+// Local snap-to-route: project GPS onto nearest polyline segment.
+// Only snaps within ~100 m of the route to avoid masking off-route states.
+function snapToRoute(lat: number, lng: number, route: LatLng[]): LatLng {
+	if (route.length === 0) return { latitude: lat, longitude: lng };
 	let minDist = Infinity;
-	let snapped: LatLng = { latitude: userLat, longitude: userLng };
-	for (let i = 0; i < routePoints.length - 1; i++) {
-		const p1 = routePoints[i];
-		const p2 = routePoints[i + 1];
+	let snapped: LatLng = { latitude: lat, longitude: lng };
+	for (let i = 0; i < route.length - 1; i++) {
+		const p1 = route[i];
+		const p2 = route[i + 1];
 		const dx = p2.longitude - p1.longitude;
 		const dy = p2.latitude - p1.latitude;
 		const lenSq = dx * dx + dy * dy;
 		if (lenSq === 0) continue;
-		let t =
-			((userLng - p1.longitude) * dx + (userLat - p1.latitude) * dy) / lenSq;
+		let t = ((lng - p1.longitude) * dx + (lat - p1.latitude) * dy) / lenSq;
 		t = Math.max(0, Math.min(1, t));
-		const projLat = p1.latitude + t * dy;
-		const projLng = p1.longitude + t * dx;
-		const d = Math.sqrt(
-			(userLat - projLat) ** 2 + (userLng - projLng) ** 2,
-		);
+		const pLat = p1.latitude + t * dy;
+		const pLng = p1.longitude + t * dx;
+		const d = Math.sqrt((lat - pLat) ** 2 + (lng - pLng) ** 2);
 		if (d < minDist) {
 			minDist = d;
-			snapped = { latitude: projLat, longitude: projLng };
+			snapped = { latitude: pLat, longitude: pLng };
 		}
 	}
-	// ~0.001° lat/lng = ~100 m at mid-latitudes.
-	if (minDist < 0.001) return snapped;
-	return { latitude: userLat, longitude: userLng };
+	return minDist < 0.001 ? snapped : { latitude: lat, longitude: lng };
 }
 
-// Google encoded-polyline decoder. Returns an array of {latitude, longitude}.
-function decodePolyline(encoded: string): LatLng[] {
-	const points: LatLng[] = [];
-	let index = 0;
-	let lat = 0;
-	let lng = 0;
-	while (index < encoded.length) {
-		let b: number;
-		let shift = 0;
-		let result = 0;
-		do {
-			b = encoded.charCodeAt(index++) - 63;
-			result |= (b & 0x1f) << shift;
-			shift += 5;
-		} while (b >= 0x20);
-		lat += result & 1 ? ~(result >> 1) : result >> 1;
-		shift = 0;
-		result = 0;
-		do {
-			b = encoded.charCodeAt(index++) - 63;
-			result |= (b & 0x1f) << shift;
-			shift += 5;
-		} while (b >= 0x20);
-		lng += result & 1 ? ~(result >> 1) : result >> 1;
-		points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
-	}
-	return points;
-}
-
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Component ───────────────────────────────────────────────────────────────
 
 export default function NavigateScreen() {
 	const router = useRouter();
@@ -241,93 +181,126 @@ export default function NavigateScreen() {
 		[stopLat, stopLng],
 	);
 
-	const [routeCoordinates, setRouteCoordinates] = useState<LatLng[]>([]);
-	const [steps, setSteps] = useState<NavigationStep[]>([]);
-	const [currentStepIndex, setCurrentStepIndex] = useState(0);
+	const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
+	const [instructions, setInstructions] = useState<NavInstruction[]>([]);
+	const [currentInstIdx, setCurrentInstIdx] = useState(0);
 	const [distanceRemaining, setDistanceRemaining] = useState(0);
 	const [durationRemaining, setDurationRemaining] = useState(0);
+	const [trafficDelaySec, setTrafficDelaySec] = useState(0);
 	const [userLocation, setUserLocation] = useState<LatLng | null>(null);
 	const [userHeading, setUserHeading] = useState(0);
-	const [userSpeed, setUserSpeed] = useState(0); // km/h
+	const [userSpeed, setUserSpeed] = useState(0);
 	const [loading, setLoading] = useState(true);
 	const [arrivalShown, setArrivalShown] = useState(false);
 
 	const mapRef = useRef<MapView | null>(null);
 	const watcherRef = useRef<Location.LocationSubscription | null>(null);
-
-	// Cost-saving: only ever fetch the route once per session, even if effects
-	// re-fire (e.g. params identity changes, location seeds twice).
 	const routeFetched = useRef(false);
-	const requestCount = useRef(0);
 
-	// ─── External-maps fallback ──────────────────────────────────────────────
+	// Circular-mean heading smoother — prevents 359°→0° wraparound jitter.
+	const headingHistory = useRef<number[]>([]);
+	const smoothHeading = useCallback((h: number): number => {
+		const hist = headingHistory.current;
+		hist.push(h);
+		if (hist.length > 5) hist.shift();
+		let sinS = 0, cosS = 0;
+		for (const deg of hist) {
+			const r = (deg * Math.PI) / 180;
+			sinS += Math.sin(r);
+			cosS += Math.cos(r);
+		}
+		return ((Math.atan2(sinS, cosS) * 180) / Math.PI + 360) % 360;
+	}, []);
+
+	// ─── Fallback: open in external maps ────────────────────────────────────
 	const fallbackToExternalMaps = useCallback(() => {
-		const url = `https://www.google.com/maps/dir/?api=1&destination=${stopLat},${stopLng}&travelmode=driving`;
+		const url = `https://maps.google.com/?daddr=${stopLat},${stopLng}&directionsmode=driving`;
 		Linking.openURL(url).catch(() => {});
 		router.back();
 	}, [stopLat, stopLng, router]);
 
-	// ─── Fetch directions (one shot, ref-gated) ──────────────────────────────
+	// ─── TomTom Routing API (one call per session) ───────────────────────────
 	const fetchRoute = useCallback(
 		async (origin: LatLng) => {
 			if (routeFetched.current) return;
 			routeFetched.current = true;
 
-			if (!MAPS_KEY) {
+			if (!TOMTOM_KEY) {
 				fallbackToExternalMaps();
 				return;
 			}
 
 			try {
-				requestCount.current += 1;
-				if (__DEV__) {
-					console.log(
-						`[navigate] Directions API calls this session: ${requestCount.current}`,
-					);
-				}
+				// Routing API v1 — fastest car route with traffic + text instructions
+				// https://developer.tomtom.com/routing-api/documentation/routing/calculate-route
 				const url =
-					`https://maps.googleapis.com/maps/api/directions/json` +
-					`?origin=${origin.latitude},${origin.longitude}` +
-					`&destination=${stopLat},${stopLng}` +
-					`&mode=driving&key=${MAPS_KEY}`;
-				const res = await fetch(url);
-				const data = await res.json();
-				if (
-					data.status !== "OK" ||
-					!Array.isArray(data.routes) ||
-					data.routes.length === 0
-				) {
-					throw new Error(data?.error_message ?? "Route not found");
-				}
-				const route = data.routes[0];
-				const leg = route.legs[0];
+					`https://api.tomtom.com/routing/1/calculateRoute/` +
+					`${origin.latitude},${origin.longitude}:${stopLat},${stopLng}/json` +
+					`?key=${TOMTOM_KEY}` +
+					`&traffic=true` +
+					`&instructionsType=text` +
+					`&language=en-GB` +
+					`&travelMode=car` +
+					`&routeType=fastest`;
 
-				setRouteCoordinates(decodePolyline(route.overview_polyline.points));
-				const navSteps: NavigationStep[] = (leg.steps ?? []).map((s: any) => ({
-					instruction: String(s.html_instructions ?? "")
-						.replace(/<[^>]*>/g, " ")
-						.replace(/&nbsp;/g, " ")
-						.replace(/&amp;/g, "&")
-						.replace(/\s+/g, " ")
-						.trim(),
-					distance: s.distance?.text ?? "",
-					maneuver: s.maneuver ?? "straight",
-					endLat: s.end_location?.lat ?? 0,
-					endLng: s.end_location?.lng ?? 0,
+				const res = await fetch(url);
+				let data: any = {};
+				try {
+					data = await res.json();
+				} catch {
+					throw new Error(`HTTP ${res.status} — non-JSON response`);
+				}
+
+				if (__DEV__) {
+					if (!res.ok) console.warn("[navigate] TomTom error:", JSON.stringify(data));
+					else console.log("[navigate] TomTom route ok, legs:", data.routes?.[0]?.legs?.length);
+				}
+
+				if (!res.ok || !data.routes || data.routes.length === 0) {
+					const msg =
+						data?.detailedError?.message ??
+						data?.error?.description ??
+						(res.ok ? "No routes in response" : `HTTP ${res.status}`);
+					throw new Error(msg);
+				}
+
+				const route = data.routes[0];
+
+				// Flatten all leg points into one continuous polyline
+				const points: LatLng[] = (route.legs ?? []).flatMap((leg: any) =>
+					(leg.points ?? []).map((p: any) => ({
+						latitude: p.latitude,
+						longitude: p.longitude,
+					})),
+				);
+				setRouteCoords(points);
+
+				// Turn-by-turn instructions from guidance section
+				const insts: NavInstruction[] = (
+					route.guidance?.instructions ?? []
+				).map((inst: any) => ({
+					message: inst.message ?? inst.combinedMessage ?? "",
+					maneuver: inst.maneuver ?? "STRAIGHT",
+					point: {
+						latitude: inst.point?.latitude ?? 0,
+						longitude: inst.point?.longitude ?? 0,
+					},
+					routeOffsetInMeters: inst.routeOffsetInMeters ?? 0,
 				}));
-				setSteps(navSteps);
-				setDistanceRemaining(leg.distance?.value ?? 0);
-				setDurationRemaining(leg.duration?.value ?? 0);
-				setCurrentStepIndex(0);
+				setInstructions(insts);
+
+				setDistanceRemaining(route.summary?.lengthInMeters ?? 0);
+				setDurationRemaining(route.summary?.travelTimeInSeconds ?? 0);
+				setTrafficDelaySec(route.summary?.trafficDelayInSeconds ?? 0);
+				setCurrentInstIdx(0);
 				setLoading(false);
 			} catch (e: any) {
-				// Reset the ref so a manual retry could re-fetch (we won't expose
-				// one in this screen, but the state is clean).
 				routeFetched.current = false;
 				setLoading(false);
+				const detail = e?.message ? `\n\n${e.message}` : "";
 				Alert.alert(
-					"Couldn't load route",
-					"Open in Google Maps instead?",
+					"Route unavailable",
+					`Couldn't calculate the route.${detail}\n\nOpen in Maps instead?`,
 					[
 						{ text: "Cancel", style: "cancel", onPress: () => router.back() },
 						{ text: "Open Maps", onPress: fallbackToExternalMaps },
@@ -338,7 +311,7 @@ export default function NavigateScreen() {
 		[stopLat, stopLng, fallbackToExternalMaps, router],
 	);
 
-	// ─── Initial location + GPS watcher ──────────────────────────────────────
+	// ─── GPS subscription ────────────────────────────────────────────────────
 	useEffect(() => {
 		let active = true;
 		(async () => {
@@ -359,12 +332,14 @@ export default function NavigateScreen() {
 				);
 				return;
 			}
+
 			const seed =
 				(await Location.getLastKnownPositionAsync()) ??
 				(await Location.getCurrentPositionAsync({
 					accuracy: Location.Accuracy.Balanced,
 				}));
 			if (!active || !seed) return;
+
 			const seedLoc: LatLng = {
 				latitude: seed.coords.latitude,
 				longitude: seed.coords.longitude,
@@ -385,10 +360,9 @@ export default function NavigateScreen() {
 						longitude: loc.coords.longitude,
 					});
 					if (loc.coords.heading != null && loc.coords.heading >= 0) {
-						setUserHeading(loc.coords.heading);
+						setUserHeading(smoothHeading(loc.coords.heading));
 					}
-					const ms = loc.coords.speed ?? 0;
-					setUserSpeed(Math.max(0, Math.round(ms * 3.6)));
+					setUserSpeed(Math.max(0, Math.round((loc.coords.speed ?? 0) * 3.6)));
 				},
 			);
 		})().catch(() => {});
@@ -398,42 +372,64 @@ export default function NavigateScreen() {
 			watcherRef.current?.remove();
 			watcherRef.current = null;
 		};
-	}, [stopLat, stopLng, fetchRoute, router]);
+	}, [stopLat, stopLng, fetchRoute, router, smoothHeading]);
 
-	// ─── Camera follow + step advancement + arrival check ────────────────────
+	// Road-snapped position used for the user arrow marker
+	const snappedLocation = useMemo<LatLng | null>(() => {
+		if (!userLocation) return null;
+		if (routeCoords.length === 0) return userLocation;
+		return snapToRoute(
+			userLocation.latitude,
+			userLocation.longitude,
+			routeCoords,
+		);
+	}, [userLocation, routeCoords]);
+
+	// Lookahead point: camera targets ~300 m ahead of the car in the direction
+	// of travel, so the driver sits in the lower third of the screen with the
+	// road ahead filling the upper two-thirds.
+	const cameraTarget = useMemo<LatLng | null>(() => {
+		const base = snappedLocation ?? userLocation;
+		if (!base) return null;
+		const rad = (userHeading * Math.PI) / 180;
+		const dist = 0.0028; // ~280 m in degrees (latitude-independent approximation)
+		return {
+			latitude: base.latitude + Math.cos(rad) * dist,
+			longitude: base.longitude + Math.sin(rad) * dist,
+		};
+	}, [snappedLocation, userLocation, userHeading]);
+
+	// ─── Camera follow, step advance, arrival ────────────────────────────────
 	useEffect(() => {
 		if (!userLocation) return;
 
-		// Pull camera into 3D heading-up mode tracking the driver.
 		mapRef.current?.animateCamera(
 			{
-				center: userLocation,
-				pitch: 50,
+				center: cameraTarget ?? snappedLocation ?? userLocation,
+				pitch: 62,
 				heading: userHeading,
 				zoom: 17,
-				altitude: 300,
+				altitude: 280,
 			},
-			{ duration: 500 },
+			{ duration: 350 },
 		);
 
-		// Update distance to destination (haversine — straight-line floor).
 		const km = haversineKm(userLocation, destination);
 		setDistanceRemaining(km * 1000);
-		// Naive duration estimate: 60 km/h average. Updated each GPS tick.
 		setDurationRemaining(Math.max(60, Math.round((km / 60) * 3600)));
 
-		// Arrival detection (50 m radius).
+		// Arrival: 50 m radius
 		if (km * 1000 < 50 && !arrivalShown) {
 			setArrivalShown(true);
-			Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
-				() => {},
-			);
+			Haptics.notificationAsync(
+				Haptics.NotificationFeedbackType.Success,
+			).catch(() => {});
 			Alert.alert(
-				`You've arrived at ${stopName}!`,
+				`Arrived at ${stopName}`,
 				"What would you like to do?",
 				[
 					{
-						text: "Continue navigating",
+						text: "Keep navigating",
 						onPress: () => setArrivalShown(false),
 					},
 					{
@@ -447,22 +443,18 @@ export default function NavigateScreen() {
 			return;
 		}
 
-		// Step advancement: within 30 m of current step's end → advance.
-		if (steps.length > 0 && currentStepIndex < steps.length - 1) {
-			const step = steps[currentStepIndex];
-			const stepEnd: LatLng = {
-				latitude: step.endLat,
-				longitude: step.endLng,
-			};
-			if (haversineKm(userLocation, stepEnd) * 1000 < 30) {
-				setCurrentStepIndex((i) => i + 1);
+		// Instruction advance: within 30 m of instruction point → next
+		if (instructions.length > 0 && currentInstIdx < instructions.length - 1) {
+			const inst = instructions[currentInstIdx];
+			if (haversineKm(userLocation, inst.point) * 1000 < 30) {
+				setCurrentInstIdx((i) => i + 1);
 				Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 			}
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [userLocation, userHeading]);
+	}, [userLocation, userHeading, snappedLocation]);
 
-	// ─── Actions ─────────────────────────────────────────────────────────────
+	// ─── Arrival action ──────────────────────────────────────────────────────
 	async function handleArrived() {
 		try {
 			if (userId && stopId && convoyId) {
@@ -473,56 +465,58 @@ export default function NavigateScreen() {
 					.eq("user_id", userId)
 					.maybeSingle();
 				if (member) {
-					await supabase.from("stop_arrivals").insert({
-						stop_id: stopId,
-						convoy_member_id: member.id,
-					});
+					await supabase
+						.from("stop_arrivals")
+						.insert({ stop_id: stopId, convoy_member_id: member.id });
 				}
 			}
 		} catch {
-			// non-fatal — the user can still tap "I arrived" on the Stops screen
+			// non-fatal
 		} finally {
 			router.replace(`/convoy/${convoyId}/map`);
 		}
 	}
 
-	function handleStopNavigation() {
-		Alert.alert("Stop navigation", "Return to the convoy map?", [
+	function handleExit() {
+		Alert.alert("Exit navigation", "Return to the convoy map?", [
 			{ text: "Cancel", style: "cancel" },
-			{
-				text: "Exit",
-				style: "destructive",
-				onPress: () => router.back(),
-			},
+			{ text: "Exit", style: "destructive", onPress: () => router.back() },
 		]);
 	}
 
-	// ─── Loading ─────────────────────────────────────────────────────────────
+	// ─── Loading screen ──────────────────────────────────────────────────────
 	if (loading) {
 		return (
 			<View style={styles.loadingRoot}>
 				<StatusBar style="light" />
-				<ActivityIndicator color="#fff" size="large" />
-				<Text style={styles.loadingText}>Calculating route…</Text>
+				<ActivityIndicator color={NAV_RED} size="large" />
+				<Text style={styles.loadingTitle}>Calculating route…</Text>
+				<Text style={styles.loadingTo} numberOfLines={1}>
+					→ {stopName}
+				</Text>
 			</View>
 		);
 	}
 
-	const currentStep = steps[currentStepIndex];
-	const nextStep = steps[currentStepIndex + 1];
+	const currentInst = instructions[currentInstIdx];
+	const nextInst = instructions[currentInstIdx + 1];
+	const hasTrafficDelay = trafficDelaySec > 60;
 
 	return (
 		<View style={styles.root}>
 			<StatusBar style="light" />
 
+			{/* ── Map with TomTom tiles ───────────────────────────────────────── */}
 			<MapView
 				ref={mapRef}
 				style={StyleSheet.absoluteFill}
-				provider={PROVIDER_DEFAULT}
-				mapType={Platform.OS === "ios" ? "mutedStandard" : "standard"}
+				mapType="standard"
+				showsBuildings={false}
+				showsPointsOfInterest={false}
 				showsCompass={false}
+				showsMyLocationButton={false}
 				showsUserLocation={false}
-				showsTraffic
+				mapPadding={{ top: 0, right: 0, bottom: 240, left: 0 }}
 				pitchEnabled
 				rotateEnabled
 				scrollEnabled={false}
@@ -531,31 +525,56 @@ export default function NavigateScreen() {
 				initialCamera={
 					userLocation
 						? {
-								center: userLocation,
-								pitch: 50,
+								center: cameraTarget ?? userLocation,
+								pitch: 62,
 								heading: userHeading,
 								zoom: 17,
-								altitude: 300,
+								altitude: 280,
 							}
 						: undefined
 				}
 			>
-				{routeCoordinates.length > 0 ? (
-					<Polyline
-						coordinates={routeCoordinates}
-						strokeColor={NAV_BLUE}
-						strokeWidth={6}
-						lineCap="round"
-						lineJoin="round"
+				{/* TomTom Traffic Flow tiles — rendered above the base map */}
+				{TOMTOM_KEY ? (
+					<UrlTile
+						urlTemplate={TRAFFIC_TILE_URL}
+						maximumZ={22}
+						flipY={false}
+						opacity={0.55}
+						zIndex={0}
 					/>
 				) : null}
 
-				{userLocation ? (
+				{/* Route: dark casing + bright line */}
+				{routeCoords.length > 0 ? (
+					<>
+						<Polyline
+							coordinates={routeCoords}
+							strokeColor={NAV_RED_OUTLINE}
+							strokeWidth={14}
+							lineCap="round"
+							lineJoin="round"
+							zIndex={5}
+						/>
+						<Polyline
+							coordinates={routeCoords}
+							strokeColor={NAV_RED}
+							strokeWidth={8}
+							lineCap="round"
+							lineJoin="round"
+							zIndex={6}
+						/>
+					</>
+				) : null}
+
+				{/* User position arrow */}
+				{snappedLocation ? (
 					<Marker
-						coordinate={userLocation}
+						coordinate={snappedLocation}
 						anchor={{ x: 0.5, y: 0.5 }}
 						flat
 						rotation={userHeading}
+						zIndex={10}
 						tracksViewChanges={false}
 					>
 						<View style={styles.navArrow}>
@@ -564,71 +583,79 @@ export default function NavigateScreen() {
 					</Marker>
 				) : null}
 
-				<Marker coordinate={destination} anchor={{ x: 0.5, y: 1 }}>
-					<View style={styles.destMarker}>
-						<Text style={styles.destMarkerIcon}>📍</Text>
+				{/* Destination pin */}
+				<Marker coordinate={destination} anchor={{ x: 0.5, y: 1 }} zIndex={5}>
+					<View style={styles.destPin}>
+						<View style={styles.destPinDot} />
 					</View>
 				</Marker>
 			</MapView>
 
-			{/* ─── Top instruction banner ──────────────────────────────────── */}
-			{currentStep ? (
-				<View style={styles.instructionBanner}>
+			{/* ── Top instruction banner ─────────────────────────────────────── */}
+			{currentInst ? (
+				<View style={styles.banner}>
 					<View style={styles.maneuverBox}>
 						<Text style={styles.maneuverArrow}>
-							{getManeuverArrow(currentStep.maneuver)}
+							{getManeuverArrow(currentInst.maneuver)}
 						</Text>
 					</View>
-					<View style={styles.instructionText}>
-						<Text style={styles.instructionMain} numberOfLines={2}>
-							{currentStep.instruction}
+					<View style={styles.instructionBlock}>
+						<Text style={styles.instructionText} numberOfLines={2}>
+							{currentInst.message}
 						</Text>
-						{currentStep.distance ? (
-							<Text style={styles.instructionDistance}>
-								In {currentStep.distance}
-							</Text>
-						) : null}
+						<Text style={styles.instructionSub}>
+							{formatDistance(distanceRemaining / 1000)} remaining
+						</Text>
 					</View>
 				</View>
 			) : null}
 
-			{/* ─── "Then …" secondary pill ─────────────────────────────────── */}
-			{nextStep ? (
-				<View style={styles.nextTurnPill}>
-					<Text style={styles.nextTurnText}>
-						Then {getManeuverArrow(nextStep.maneuver)} {nextStep.distance}
+			{/* ── "Then …" pill ──────────────────────────────────────────────── */}
+			{nextInst ? (
+				<View style={styles.nextPill}>
+					<Text style={styles.nextPillText}>
+						Then {getManeuverArrow(nextInst.maneuver)}{"  "}{nextInst.message.split(" ").slice(0, 4).join(" ")}…
 					</Text>
 				</View>
 			) : null}
 
-			{/* ─── Current speed badge ─────────────────────────────────────── */}
+			{/* ── Speed badge ────────────────────────────────────────────────── */}
 			<View style={styles.speedBadge}>
-				<Text style={styles.speedNumber}>{userSpeed}</Text>
+				<Text style={styles.speedNum}>{userSpeed}</Text>
 				<Text style={styles.speedUnit}>km/h</Text>
 			</View>
 
-			{/* ─── Bottom navigation bar ───────────────────────────────────── */}
-			<View style={styles.bottomBar}>
-				<View style={styles.bottomBarInfo}>
-					<Text style={styles.bottomBarTime}>
-						{formatDuration(durationRemaining)}
-					</Text>
-					<Text style={styles.bottomBarDot}>·</Text>
-					<Text style={styles.bottomBarDistance}>
-						{formatDistance(distanceRemaining / 1000)}
-					</Text>
-					<Text style={styles.bottomBarDot}>·</Text>
-					<Text style={styles.bottomBarEta}>
-						Arr. {getArrivalTime(durationRemaining)}
+			{/* ── Traffic delay badge (shows when delay > 1 min) ─────────────── */}
+			{hasTrafficDelay ? (
+				<View style={styles.delayBadge}>
+					<Text style={styles.delayText}>
+						+{formatDuration(trafficDelaySec)} delay
 					</Text>
 				</View>
-				<View style={styles.bottomBarActions}>
+			) : null}
+
+			{/* ── Bottom bar ─────────────────────────────────────────────────── */}
+			<View style={styles.bottomBar}>
+				<View style={styles.bottomInfo}>
+					<Text style={styles.bottomTime}>
+						{formatDuration(durationRemaining)}
+					</Text>
+					<Text style={styles.bottomDot}>·</Text>
+					<Text style={styles.bottomDist}>
+						{formatDistance(distanceRemaining / 1000)}
+					</Text>
+					<Text style={styles.bottomDot}>·</Text>
+					<Text style={styles.bottomEta}>
+						arr. {getArrivalTime(durationRemaining)}
+					</Text>
+				</View>
+				<View style={styles.bottomActions}>
 					<TouchableOpacity
-						style={styles.stopNavBtn}
-						onPress={handleStopNavigation}
+						style={styles.exitBtn}
+						onPress={handleExit}
 						activeOpacity={0.8}
 					>
-						<Text style={styles.stopNavText}>Exit</Text>
+						<Text style={styles.exitText}>Exit</Text>
 					</TouchableOpacity>
 					<TouchableOpacity
 						style={styles.arrivedBtn}
@@ -646,206 +673,241 @@ export default function NavigateScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-	root: { flex: 1, backgroundColor: "#000" },
+	root: { flex: 1, backgroundColor: "#0a0a0a" },
 
+	// Loading
 	loadingRoot: {
 		flex: 1,
-		backgroundColor: "#1a1a1a",
+		backgroundColor: "#0a0a0a",
 		alignItems: "center",
 		justifyContent: "center",
-		gap: 12,
+		gap: 14,
 	},
-	loadingText: {
-		color: "rgba(255,255,255,0.7)",
-		fontSize: 15,
+	loadingTitle: {
+		color: "#ffffff",
+		fontSize: 17,
 		fontWeight: "500",
+		letterSpacing: -0.3,
+	},
+	loadingTo: {
+		color: "rgba(255,255,255,0.4)",
+		fontSize: 13,
+		fontWeight: "400",
 	},
 
-	// ── User arrow ──────────────────────────────────────────────────────────
+	// User arrow
 	navArrow: {
-		width: 40,
-		height: 40,
-		backgroundColor: NAV_BLUE,
-		borderRadius: 20,
+		width: 38,
+		height: 38,
+		backgroundColor: NAV_RED,
+		borderRadius: 19,
 		alignItems: "center",
 		justifyContent: "center",
 		borderWidth: 3,
 		borderColor: "#fff",
-		shadowColor: "#000",
-		shadowOffset: { width: 0, height: 2 },
-		shadowOpacity: 0.3,
-		shadowRadius: 4,
-		elevation: 6,
 	},
 	navArrowText: {
 		color: "#fff",
 		fontSize: 16,
+		lineHeight: 18,
 		fontWeight: "700",
 	},
 
-	// ── Destination marker ──────────────────────────────────────────────────
-	destMarker: {
+	// Destination pin
+	destPin: {
+		width: 20,
+		height: 20,
+		borderRadius: 10,
+		backgroundColor: "rgba(220,38,38,0.3)",
+		borderWidth: 2,
+		borderColor: NAV_RED,
 		alignItems: "center",
 		justifyContent: "center",
 	},
-	destMarkerIcon: { fontSize: 32 },
+	destPinDot: {
+		width: 8,
+		height: 8,
+		borderRadius: 4,
+		backgroundColor: NAV_RED,
+	},
 
-	// ── Top instruction banner ──────────────────────────────────────────────
-	instructionBanner: {
+	// Instruction banner
+	banner: {
 		position: "absolute",
 		top: 0,
 		left: 0,
 		right: 0,
-		backgroundColor: "#1a1a1a",
+		backgroundColor: "rgba(10,10,10,0.96)",
 		paddingTop: 56,
 		paddingBottom: 20,
 		paddingHorizontal: 20,
 		flexDirection: "row",
 		alignItems: "center",
 		gap: 16,
-		borderBottomLeftRadius: 20,
-		borderBottomRightRadius: 20,
-		shadowColor: "#000",
-		shadowOffset: { width: 0, height: 4 },
-		shadowOpacity: 0.3,
-		shadowRadius: 8,
-		elevation: 8,
+		borderBottomLeftRadius: 24,
+		borderBottomRightRadius: 24,
+		borderBottomWidth: 1,
+		borderColor: "rgba(255,255,255,0.06)",
 		zIndex: 100,
 	},
 	maneuverBox: {
-		width: 64,
-		height: 64,
-		backgroundColor: "rgba(255,255,255,0.1)",
-		borderRadius: 16,
+		width: 60,
+		height: 60,
+		backgroundColor: NAV_RED,
+		borderRadius: 18,
 		alignItems: "center",
 		justifyContent: "center",
 		flexShrink: 0,
 	},
 	maneuverArrow: {
-		fontSize: 32,
+		fontSize: 28,
 		color: "#fff",
 		fontWeight: "700",
 	},
-	instructionText: { flex: 1 },
-	instructionMain: {
-		fontSize: 18,
+	instructionBlock: { flex: 1 },
+	instructionText: {
+		fontSize: 17,
 		fontWeight: "700",
-		color: "#fff",
-		lineHeight: 24,
+		color: "#ffffff",
+		lineHeight: 23,
+		letterSpacing: -0.3,
 	},
-	instructionDistance: {
-		fontSize: 14,
-		color: "rgba(255,255,255,0.7)",
+	instructionSub: {
+		fontSize: 12,
+		color: "rgba(255,255,255,0.45)",
 		marginTop: 4,
+		fontWeight: "400",
 	},
 
-	// ── "Then …" pill ───────────────────────────────────────────────────────
-	nextTurnPill: {
+	// "Then …" pill
+	nextPill: {
 		position: "absolute",
 		top: 160,
 		left: 20,
-		backgroundColor: "rgba(26,26,26,0.85)",
+		backgroundColor: "rgba(10,10,10,0.88)",
 		borderRadius: 20,
+		borderWidth: 1,
+		borderColor: "rgba(255,255,255,0.08)",
 		paddingHorizontal: 14,
 		paddingVertical: 8,
 		zIndex: 99,
 	},
-	nextTurnText: {
-		color: "#fff",
-		fontSize: 13,
+	nextPillText: {
+		color: "rgba(255,255,255,0.7)",
+		fontSize: 12,
 		fontWeight: "500",
 	},
 
-	// ── Speed badge ─────────────────────────────────────────────────────────
+	// Speed badge
 	speedBadge: {
 		position: "absolute",
-		bottom: 180,
+		bottom: 200,
 		left: 16,
-		width: 64,
-		height: 64,
-		backgroundColor: "#1a1a1a",
-		borderRadius: 32,
+		width: 62,
+		height: 62,
+		backgroundColor: "rgba(10,10,10,0.92)",
+		borderRadius: 31,
+		borderWidth: 1,
+		borderColor: "rgba(255,255,255,0.1)",
 		alignItems: "center",
 		justifyContent: "center",
 		zIndex: 99,
-		shadowColor: "#000",
-		shadowOffset: { width: 0, height: 2 },
-		shadowOpacity: 0.2,
-		shadowRadius: 6,
-		elevation: 4,
 	},
-	speedNumber: {
+	speedNum: {
 		fontSize: 20,
 		fontWeight: "700",
 		color: "#fff",
 		lineHeight: 22,
 	},
 	speedUnit: {
-		fontSize: 10,
-		color: "rgba(255,255,255,0.6)",
+		fontSize: 9,
+		color: "rgba(255,255,255,0.5)",
+		letterSpacing: 0.5,
 	},
 
-	// ── Bottom bar ──────────────────────────────────────────────────────────
+	// Traffic delay badge
+	delayBadge: {
+		position: "absolute",
+		bottom: 200,
+		right: 16,
+		backgroundColor: "rgba(220,38,38,0.15)",
+		borderRadius: 20,
+		borderWidth: 1,
+		borderColor: "rgba(220,38,38,0.35)",
+		paddingHorizontal: 12,
+		paddingVertical: 8,
+		zIndex: 99,
+	},
+	delayText: {
+		color: NAV_RED,
+		fontSize: 12,
+		fontWeight: "700",
+		letterSpacing: 0.2,
+	},
+
+	// Bottom bar
 	bottomBar: {
 		position: "absolute",
 		bottom: 0,
 		left: 0,
 		right: 0,
-		backgroundColor: "#1a1a1a",
-		paddingBottom: 34,
-		paddingTop: 16,
+		backgroundColor: "rgba(10,10,10,0.97)",
+		paddingBottom: 36,
+		paddingTop: 18,
 		paddingHorizontal: 20,
-		borderTopLeftRadius: 20,
-		borderTopRightRadius: 20,
+		borderTopLeftRadius: 24,
+		borderTopRightRadius: 24,
+		borderTopWidth: 1,
+		borderColor: "rgba(255,255,255,0.06)",
 		zIndex: 100,
 	},
-	bottomBarInfo: {
+	bottomInfo: {
 		flexDirection: "row",
 		alignItems: "center",
 		gap: 8,
-		marginBottom: 12,
+		marginBottom: 14,
 	},
-	bottomBarTime: {
-		fontSize: 22,
+	bottomTime: {
+		fontSize: 24,
 		fontWeight: "700",
 		color: "#fff",
+		letterSpacing: -0.5,
 	},
-	bottomBarDot: {
-		color: "rgba(255,255,255,0.4)",
-		fontSize: 16,
-	},
-	bottomBarDistance: {
+	bottomDot: { color: "rgba(255,255,255,0.3)", fontSize: 16 },
+	bottomDist: {
 		fontSize: 15,
-		color: "rgba(255,255,255,0.8)",
+		color: "rgba(255,255,255,0.75)",
+		fontWeight: "500",
 	},
-	bottomBarEta: {
+	bottomEta: {
 		fontSize: 13,
-		color: "rgba(255,255,255,0.5)",
+		color: "rgba(255,255,255,0.4)",
+		fontWeight: "400",
 	},
-	bottomBarActions: {
+	bottomActions: {
 		flexDirection: "row",
 		gap: 12,
 	},
-	stopNavBtn: {
+	exitBtn: {
 		flex: 1,
-		height: 50,
-		backgroundColor: "rgba(255,255,255,0.1)",
-		borderRadius: 25,
+		height: 52,
+		backgroundColor: "rgba(255,255,255,0.06)",
+		borderRadius: 26,
 		alignItems: "center",
 		justifyContent: "center",
 		borderWidth: 1,
-		borderColor: "rgba(255,255,255,0.15)",
+		borderColor: "rgba(255,255,255,0.1)",
 	},
-	stopNavText: {
-		color: "#fff",
+	exitText: {
+		color: "rgba(255,255,255,0.7)",
 		fontSize: 15,
 		fontWeight: "500",
 	},
 	arrivedBtn: {
 		flex: 2,
-		height: 50,
-		backgroundColor: NAV_BLUE,
-		borderRadius: 25,
+		height: 52,
+		backgroundColor: NAV_RED,
+		borderRadius: 26,
 		alignItems: "center",
 		justifyContent: "center",
 	},
@@ -853,5 +915,6 @@ const styles = StyleSheet.create({
 		color: "#fff",
 		fontSize: 15,
 		fontWeight: "700",
+		letterSpacing: 0.2,
 	},
 });

@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
 	},
 	title: {
 		fontSize: FontSize.xxl,
-		fontWeight: FontWeight.light,
+		fontWeight: "700",
 		color: Colors.textPrimary,
 		letterSpacing: -0.5,
 	},
@@ -130,6 +130,8 @@ const styles = StyleSheet.create({
 		borderRadius: Radius.lg,
 		paddingHorizontal: Spacing.lg,
 		paddingVertical: Spacing.md,
+		borderWidth: 1,
+		borderColor: Colors.border,
 	},
 	featureIcon: { fontSize: 22 },
 	featureLabel: {

@@ -6,19 +6,19 @@ import {
 	SafeAreaView,
 	Switch,
 	ScrollView,
+	StatusBar,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Button } from "../../src/components/Button";
 import { FadeInView } from "../../src/components/FadeInView";
-import { NeumorphicView } from "../../src/components/NeumorphicView";
 import { SoftBackground } from "../../src/components/SoftBackground";
 import { StaggeredFadeIn } from "../../src/components/StaggeredFadeIn";
 import {
 	Colors,
 	Spacing,
 	FontSize,
-	FontWeight,
 	Radius,
+	Shadows,
 } from "../../src/constants/theme";
 
 interface PrivacySettings {
@@ -45,6 +45,7 @@ export default function PrivacyScreen() {
 
 	return (
 		<SafeAreaView style={styles.safe}>
+			<StatusBar barStyle="light-content" backgroundColor={Colors.bg} />
 			<SoftBackground />
 			<FadeInView style={styles.flex}>
 				<ScrollView contentContainerStyle={styles.container}>
@@ -53,9 +54,7 @@ export default function PrivacyScreen() {
 							<View
 								key={i}
 								style={[
-									styles.dot,
-									i < 3 && styles.dotDone,
-									i === 3 && styles.dotActive,
+									i === 3 ? styles.dotPill : styles.dotDone,
 								]}
 							/>
 						))}
@@ -67,7 +66,7 @@ export default function PrivacyScreen() {
 					<View style={styles.toggleList}>
 						{TOGGLES.map((t, index) => (
 							<StaggeredFadeIn key={t.key} index={index}>
-								<NeumorphicView style={styles.toggleRow}>
+								<View style={[styles.toggleRow, Shadows.card]}>
 									<View style={{ flex: 1 }}>
 										<Text style={styles.toggleName}>{t.name}</Text>
 										<Text style={styles.toggleDesc}>{t.desc}</Text>
@@ -75,23 +74,21 @@ export default function PrivacyScreen() {
 									<Switch
 										value={settings[t.key as keyof PrivacySettings]}
 										onValueChange={() => toggle(t.key as keyof PrivacySettings)}
-										trackColor={{
-											false: Colors.primaryDim,
-											true: Colors.primary,
-										}}
+										trackColor={{ false: "#1a1a1a", true: Colors.primary }}
 										thumbColor="#fff"
-										ios_backgroundColor={Colors.primaryDim}
+										ios_backgroundColor="#1a1a1a"
 									/>
-								</NeumorphicView>
+								</View>
 							</StaggeredFadeIn>
 						))}
 					</View>
 
-					<NeumorphicView pressed style={styles.infoPill}>
+					<View style={styles.infoPill}>
+						<View style={styles.infoAccentBar} />
 						<Text style={styles.infoText}>
 							Location sharing stops automatically 48h after the convoy ends.
 						</Text>
-					</NeumorphicView>
+					</View>
 
 					<Button label="Start using Convoi" onPress={handleStart} />
 				</ScrollView>
@@ -101,44 +98,29 @@ export default function PrivacyScreen() {
 }
 
 const TOGGLES = [
-	{
-		key: "exactLocation",
-		name: "Exact location",
-		desc: "Share precise GPS with convoy",
-	},
-	{
-		key: "autoWipe",
-		name: "Auto-wipe on trip end",
-		desc: "Delete all data when convoy closes",
-	},
-	{
-		key: "shareVehicleProfile",
-		name: "Share vehicle profile",
-		desc: "Helps plan smarter fuel stops",
-	},
+	{ key: "exactLocation", name: "Exact location", desc: "Share precise GPS with convoy" },
+	{ key: "autoWipe", name: "Auto-wipe on trip end", desc: "Delete all data when convoy closes" },
+	{ key: "shareVehicleProfile", name: "Share vehicle profile", desc: "Helps plan smarter fuel stops" },
 ];
 
 const styles = StyleSheet.create({
 	safe: { flex: 1, backgroundColor: Colors.bg },
 	flex: { flex: 1 },
 	container: { padding: Spacing.xl, paddingBottom: Spacing.xxl },
+
 	dots: {
 		flexDirection: "row",
 		justifyContent: "center",
-		gap: Spacing.xs,
+		alignItems: "center",
+		gap: 6,
 		marginBottom: Spacing.xxl,
 	},
-	dot: {
-		width: 6,
-		height: 6,
-		borderRadius: 3,
-		backgroundColor: Colors.primaryDim,
-	},
-	dotActive: { width: 22, borderRadius: 3, backgroundColor: Colors.primary },
-	dotDone: { backgroundColor: Colors.textPrimary },
+	dotDone: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.primary },
+	dotPill: { width: 24, height: 6, borderRadius: 3, backgroundColor: Colors.primary },
+
 	title: {
 		fontSize: FontSize.xxl,
-		fontWeight: FontWeight.light,
+		fontWeight: "700",
 		color: Colors.textPrimary,
 		marginBottom: Spacing.sm,
 		letterSpacing: -0.5,
@@ -148,8 +130,9 @@ const styles = StyleSheet.create({
 		color: Colors.textMuted,
 		lineHeight: 22,
 		marginBottom: Spacing.xl,
-		fontWeight: FontWeight.regular,
+		fontWeight: "400",
 	},
+
 	toggleList: { gap: Spacing.md, marginBottom: Spacing.xl },
 	toggleRow: {
 		backgroundColor: Colors.bgCard,
@@ -158,29 +141,41 @@ const styles = StyleSheet.create({
 		flexDirection: "row",
 		alignItems: "center",
 		gap: Spacing.md,
+		borderWidth: 1,
+		borderColor: Colors.border,
 	},
 	toggleName: {
 		fontSize: FontSize.md,
-		fontWeight: FontWeight.semibold,
+		fontWeight: "600",
 		color: Colors.textPrimary,
 	},
 	toggleDesc: {
 		fontSize: FontSize.sm,
 		color: Colors.textMuted,
 		marginTop: 4,
-		fontWeight: FontWeight.regular,
+		fontWeight: "400",
 	},
+
 	infoPill: {
-		backgroundColor: Colors.bgCard,
+		flexDirection: "row",
+		backgroundColor: Colors.bgAccent,
 		borderRadius: Radius.lg,
-		padding: Spacing.lg,
 		marginBottom: Spacing.xl,
+		overflow: "hidden",
+		borderWidth: 1,
+		borderColor: Colors.borderAccent,
+	},
+	infoAccentBar: {
+		width: 3,
+		backgroundColor: Colors.primary,
 	},
 	infoText: {
+		flex: 1,
+		padding: Spacing.lg,
 		fontSize: FontSize.sm,
-		color: Colors.textSecondary,
+		color: Colors.primary,
 		textAlign: "center",
 		lineHeight: 20,
-		fontWeight: FontWeight.regular,
+		fontWeight: "400",
 	},
 });

@@ -204,7 +204,7 @@ export default function RootLayout() {
 
 	return (
 		<GestureHandlerRootView style={{ flex: 1 }}>
-			<StatusBar style="dark" />
+			<StatusBar style="light" />
 			<Stack
 				screenOptions={{
 					headerShown: false,
@@ -226,6 +226,14 @@ export default function RootLayout() {
 				<Stack.Screen name="convoy/[id]/lobby" />
 				<Stack.Screen name="convoy/[id]/map" />
 				<Stack.Screen name="convoy/[id]/stops" />
+				<Stack.Screen
+					name="convoy/[id]/overview"
+					options={{ headerShown: false, animation: "slide_from_bottom" }}
+				/>
+				<Stack.Screen
+					name="convoy/[id]/summary"
+					options={{ headerShown: false, animation: "fade" }}
+				/>
 				<Stack.Screen
 					name="convoy/[id]/navigate"
 					options={{ headerShown: false }}

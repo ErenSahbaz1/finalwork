@@ -1,16 +1,15 @@
 import React from "react";
-import { View, Text, StyleSheet, SafeAreaView } from "react-native";
+import { View, Text, StyleSheet, SafeAreaView, StatusBar } from "react-native";
 import { useRouter } from "expo-router";
 import { Button } from "../../src/components/Button";
 import { FadeInView } from "../../src/components/FadeInView";
-import { NeumorphicView } from "../../src/components/NeumorphicView";
 import { SoftBackground } from "../../src/components/SoftBackground";
 import {
 	Colors,
 	Spacing,
 	FontSize,
-	FontWeight,
 	Radius,
+	Shadows,
 } from "../../src/constants/theme";
 
 export default function WelcomeScreen() {
@@ -18,11 +17,12 @@ export default function WelcomeScreen() {
 
 	return (
 		<SafeAreaView style={styles.safe}>
+			<StatusBar barStyle="light-content" backgroundColor={Colors.bg} />
 			<SoftBackground />
 			<FadeInView style={styles.container}>
 				{/* Progress dots */}
 				<View style={styles.dots}>
-					<View style={[styles.dot, styles.dotActive]} />
+					<View style={[styles.dotPill]} />
 					<View style={styles.dot} />
 					<View style={styles.dot} />
 					<View style={styles.dot} />
@@ -35,9 +35,12 @@ export default function WelcomeScreen() {
 
 				<View style={styles.features}>
 					{FEATURES.map((f) => (
-						<NeumorphicView key={f.label} style={styles.featureRow}>
+						<View key={f.label} style={[styles.featureRow, Shadows.card]}>
+							<View style={styles.featureIconBox}>
+								<Text style={styles.featureIcon}>{f.icon}</Text>
+							</View>
 							<Text style={styles.featureLabel}>{f.label}</Text>
-						</NeumorphicView>
+						</View>
 					))}
 				</View>
 
@@ -50,7 +53,6 @@ export default function WelcomeScreen() {
 						label="I have an invite code"
 						variant="ghost"
 						onPress={() => router.push("/convoy/join")}
-						style={styles.ghostBtn}
 					/>
 				</View>
 			</FadeInView>
@@ -59,54 +61,78 @@ export default function WelcomeScreen() {
 }
 
 const FEATURES = [
-	{ label: "Live group position sharing" },
-	{ label: "Smart fuel stop planning" },
-	{ label: "Coordinate stops as a group" },
+	{ icon: "📍", label: "Live group position sharing" },
+	{ icon: "⛽", label: "Smart fuel stop planning" },
+	{ icon: "🤝", label: "Coordinate stops as a group" },
 ];
 
 const styles = StyleSheet.create({
 	safe: { flex: 1, backgroundColor: Colors.bg },
 	container: { flex: 1, padding: Spacing.xl, justifyContent: "space-between" },
+
 	dots: {
 		flexDirection: "row",
 		justifyContent: "center",
-		gap: Spacing.xs,
+		alignItems: "center",
+		gap: 6,
 		paddingTop: Spacing.md,
+	},
+	dotPill: {
+		width: 24,
+		height: 6,
+		borderRadius: 3,
+		backgroundColor: Colors.primary,
 	},
 	dot: {
 		width: 6,
 		height: 6,
 		borderRadius: 3,
-		backgroundColor: Colors.primaryDim,
+		backgroundColor: "#1a1a1a",
 	},
-	dotActive: { width: 22, borderRadius: 3, backgroundColor: Colors.primary },
+
 	hero: { alignItems: "center", gap: Spacing.sm, marginTop: Spacing.xxl },
 	appName: {
-		fontSize: FontSize.display,
-		fontWeight: FontWeight.thin,
-		color: Colors.primary,
-		letterSpacing: -1.5,
+		fontSize: 48,
+		fontWeight: "200",
+		color: "#ffffff",
+		letterSpacing: -2,
 	},
 	tagline: {
 		fontSize: FontSize.md,
 		color: Colors.textMuted,
-		fontWeight: FontWeight.regular,
+		fontWeight: "400",
 	},
+
 	features: {
 		paddingVertical: Spacing.md,
 		gap: Spacing.md,
 	},
 	featureRow: {
-		paddingVertical: Spacing.lg,
+		flexDirection: "row",
+		alignItems: "center",
+		gap: Spacing.md,
+		paddingVertical: Spacing.md,
 		paddingHorizontal: Spacing.lg,
 		borderRadius: Radius.lg,
 		backgroundColor: Colors.bgCard,
+		borderWidth: 1,
+		borderColor: Colors.border,
 	},
+	featureIconBox: {
+		width: 36,
+		height: 36,
+		borderRadius: 10,
+		backgroundColor: Colors.primaryDim,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	featureIcon: { fontSize: 18 },
 	featureLabel: {
 		fontSize: FontSize.md,
 		color: Colors.textSecondary,
-		fontWeight: FontWeight.regular,
+		fontWeight: "400",
+		flex: 1,
 	},
+
 	actions: { gap: Spacing.md },
-	ghostBtn: {},
 });

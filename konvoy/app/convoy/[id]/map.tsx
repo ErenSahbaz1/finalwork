@@ -303,6 +303,22 @@ export default function ConvoyMapScreen() {
 			.on(
 				"postgres_changes",
 				{
+					event: "UPDATE",
+					schema: "public",
+					table: "convoys",
+					filter: `id=eq.${id}`,
+				},
+				(payload) => {
+					const updated = payload.new as any;
+					setConvoy((prev) => (prev ? { ...prev, ...updated } : prev));
+					if (updated.status === "ended") {
+						router.replace(`/convoy/${id}/summary`);
+					}
+				},
+			)
+			.on(
+				"postgres_changes",
+				{
 					event: "*",
 					schema: "public",
 					table: "convoy_members",
@@ -834,6 +850,13 @@ export default function ConvoyMapScreen() {
 								{memberCount} member{memberCount === 1 ? "" : "s"}
 							</Text>
 						</View>
+						<TouchableOpacity
+							style={styles.overviewPill}
+							onPress={() => router.push(`/convoy/${id}/overview`)}
+							activeOpacity={0.8}
+						>
+							<Text style={styles.overviewPillText}>Overview</Text>
+						</TouchableOpacity>
 					</View>
 
 					<View style={styles.mapButtons}>
@@ -987,6 +1010,14 @@ export default function ConvoyMapScreen() {
 							onPress={handleSOS}
 						/>
 					</View>
+
+					{/* End convoy link — takes leader back to lobby */}
+					<TouchableOpacity
+						style={styles.endConvoyBtn}
+						onPress={() => router.push(`/convoy/${id}/lobby`)}
+					>
+						<Text style={styles.endConvoyText}>End convoy</Text>
+					</TouchableOpacity>
 
 					{/* Tab bar */}
 					<View style={styles.tabBar}>
@@ -1160,21 +1191,23 @@ const styles = StyleSheet.create({
 		marginRight: Spacing.sm,
 		flexDirection: "row",
 		alignItems: "center",
-		backgroundColor: Colors.overlay,
-		borderRadius: 14,
+		backgroundColor: "rgba(10,10,10,0.92)",
+		borderRadius: 16,
 		paddingHorizontal: Spacing.md,
 		paddingVertical: Spacing.sm,
 		gap: Spacing.sm,
 		minHeight: 56,
+		borderWidth: 1,
+		borderColor: "rgba(255,255,255,0.08)",
 	},
 	hudBack: {
-		color: Colors.textPrimary,
+		color: "#ffffff",
 		fontSize: 22,
 		fontWeight: FontWeight.semibold,
 		paddingRight: Spacing.xs,
 	},
 	hudTitle: {
-		color: Colors.textPrimary,
+		color: "#ffffff",
 		fontSize: FontSize.md,
 		fontWeight: FontWeight.semibold,
 	},
@@ -1184,6 +1217,19 @@ const styles = StyleSheet.create({
 		marginTop: 2,
 		fontWeight: FontWeight.regular,
 	},
+	overviewPill: {
+		backgroundColor: "rgba(245,158,11,0.12)",
+		borderWidth: 1,
+		borderColor: "rgba(245,158,11,0.30)",
+		borderRadius: 20,
+		paddingHorizontal: 10,
+		paddingVertical: 5,
+	},
+	overviewPillText: {
+		fontSize: 11,
+		fontWeight: FontWeight.semibold,
+		color: "#f59e0b",
+	},
 
 	// Map buttons
 	mapButtons: { gap: Spacing.sm },
@@ -1191,12 +1237,14 @@ const styles = StyleSheet.create({
 		width: 52,
 		height: 52,
 		borderRadius: 14,
-		backgroundColor: Colors.overlay,
+		backgroundColor: "rgba(10,10,10,0.92)",
 		alignItems: "center",
 		justifyContent: "center",
+		borderWidth: 1,
+		borderColor: "rgba(255,255,255,0.08)",
 	},
 	mapBtnLabel: {
-		color: Colors.textPrimary,
+		color: "#ffffff",
 		fontSize: FontSize.sm,
 		fontWeight: FontWeight.semibold,
 	},
@@ -1226,18 +1274,20 @@ const styles = StyleSheet.create({
 	etaBar: {
 		flexDirection: "row",
 		alignItems: "center",
-		backgroundColor: Colors.bgCard,
+		backgroundColor: "rgba(10,10,10,0.95)",
 		paddingHorizontal: Spacing.lg,
 		paddingVertical: Spacing.md,
 		borderTopLeftRadius: 20,
 		borderTopRightRadius: 20,
+		borderTopWidth: 1,
+		borderTopColor: "rgba(255,255,255,0.06)",
 		gap: Spacing.md,
 	},
 	etaLabel: {
 		color: Colors.textMuted,
 		fontSize: FontSize.xs,
 		textTransform: "uppercase",
-		letterSpacing: 0.8,
+		letterSpacing: 1.5,
 		fontWeight: FontWeight.semibold,
 		marginBottom: 8,
 	},
@@ -1270,10 +1320,11 @@ const styles = StyleSheet.create({
 
 	// Panel
 	panel: {
-		backgroundColor: Colors.bgCard,
+		backgroundColor: "#0a0a0a",
 		paddingHorizontal: Spacing.lg,
 		paddingTop: Spacing.md,
-		...Shadow.lg,
+		borderTopWidth: 1,
+		borderTopColor: "rgba(255,255,255,0.06)",
 	},
 
 	// Next stop card
@@ -1286,7 +1337,10 @@ const styles = StyleSheet.create({
 		marginBottom: Spacing.md,
 		gap: Spacing.md,
 		minHeight: 64,
-		...Shadow.sm,
+		borderWidth: 1,
+		borderColor: Colors.border,
+		borderLeftWidth: 3,
+		borderLeftColor: Colors.primary,
 	},
 	stopIconBox: {
 		width: 44,
@@ -1298,15 +1352,15 @@ const styles = StyleSheet.create({
 	},
 	stopIconText: { fontSize: 20 },
 	nextStopName: {
-		color: Colors.textPrimary,
+		color: "#ffffff",
 		fontSize: FontSize.md,
 		fontWeight: FontWeight.semibold,
 	},
 	nextStopMeta: {
-		color: Colors.textMuted,
+		color: Colors.primary,
 		fontSize: FontSize.sm,
 		marginTop: 2,
-		fontWeight: FontWeight.regular,
+		fontWeight: FontWeight.semibold,
 	},
 	nextStopChevron: {
 		color: Colors.textMuted,
@@ -1328,19 +1382,21 @@ const styles = StyleSheet.create({
 		justifyContent: "center",
 		paddingVertical: Spacing.md,
 		minHeight: 60,
-		...Shadow.sm,
+		borderWidth: 1,
+		borderColor: Colors.border,
 	},
 	quickBtnDanger: {
-		backgroundColor: Colors.danger,
+		backgroundColor: Colors.bgAccent,
+		borderColor: Colors.borderAccent,
 	},
 	quickBtnIcon: { fontSize: 18, marginBottom: 4 },
 	quickBtnLabel: {
-		color: Colors.textPrimary,
+		color: "#ffffff",
 		fontSize: FontSize.xs,
 		fontWeight: FontWeight.semibold,
 		letterSpacing: 0.2,
 	},
-	quickBtnLabelDanger: { color: "#fff" },
+	quickBtnLabelDanger: { color: Colors.primary },
 
 	// Active/disabled state for quick buttons after a status is sent
 	quickBtnActive: {
@@ -1383,11 +1439,23 @@ const styles = StyleSheet.create({
 		textAlign: "center",
 	},
 
+	// End convoy link
+	endConvoyBtn: {
+		alignItems: "center",
+		padding: 10,
+		marginTop: 4,
+	},
+	endConvoyText: {
+		fontSize: 12,
+		color: Colors.textMuted,
+		textDecorationLine: "underline",
+	},
+
 	// Tab bar
 	tabBar: {
 		flexDirection: "row",
 		borderTopWidth: 1,
-		borderTopColor: Colors.border,
+		borderTopColor: "rgba(255,255,255,0.06)",
 		paddingTop: Spacing.sm,
 	},
 	tabItem: {
@@ -1397,7 +1465,7 @@ const styles = StyleSheet.create({
 		paddingVertical: Spacing.sm,
 		minHeight: 48,
 	},
-	tabIcon: { fontSize: 16, opacity: 0.5 },
+	tabIcon: { fontSize: 16, opacity: 0.35 },
 	tabIconActive: { opacity: 1 },
 	tabLabel: {
 		color: Colors.textMuted,
@@ -1405,5 +1473,5 @@ const styles = StyleSheet.create({
 		fontWeight: FontWeight.medium,
 		marginTop: 4,
 	},
-	tabLabelActive: { color: Colors.textPrimary, fontWeight: FontWeight.semibold },
+	tabLabelActive: { color: Colors.primary, fontWeight: FontWeight.semibold },
 });

@@ -1,19 +1,18 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, SafeAreaView, ScrollView } from "react-native";
+import { View, Text, StyleSheet, SafeAreaView, ScrollView, StatusBar } from "react-native";
 import { useRouter } from "expo-router";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import { Button } from "../../src/components/Button";
 import { FadeInView } from "../../src/components/FadeInView";
-import { NeumorphicView } from "../../src/components/NeumorphicView";
 import { SoftBackground } from "../../src/components/SoftBackground";
 import { StaggeredFadeIn } from "../../src/components/StaggeredFadeIn";
 import {
 	Colors,
 	Spacing,
 	FontSize,
-	FontWeight,
 	Radius,
+	Shadows,
 } from "../../src/constants/theme";
 
 export default function PermissionsScreen() {
@@ -26,7 +25,7 @@ export default function PermissionsScreen() {
 			await Location.requestForegroundPermissionsAsync();
 			await Location.requestBackgroundPermissionsAsync();
 			await Notifications.requestPermissionsAsync();
-		} catch (e) {
+		} catch {
 			// User can deny — app will handle limited mode
 		} finally {
 			setLoading(false);
@@ -36,14 +35,15 @@ export default function PermissionsScreen() {
 
 	return (
 		<SafeAreaView style={styles.safe}>
+			<StatusBar barStyle="light-content" backgroundColor={Colors.bg} />
 			<SoftBackground />
 			<FadeInView style={styles.flex}>
 				<ScrollView contentContainerStyle={styles.container}>
 					<View style={styles.dots}>
-						<View style={[styles.dot, styles.dotDone]} />
-						<View style={[styles.dot, styles.dotActive]} />
-						<View style={styles.dot} />
-						<View style={styles.dot} />
+						<View style={styles.dotDone} />
+						<View style={styles.dotPill} />
+						<View style={styles.dotInactive} />
+						<View style={styles.dotInactive} />
 					</View>
 
 					<Text style={styles.title}>A few permissions first</Text>
@@ -54,13 +54,12 @@ export default function PermissionsScreen() {
 					<View style={styles.permList}>
 						{PERMISSIONS.map((p, index) => (
 							<StaggeredFadeIn key={p.name} index={index}>
-								<NeumorphicView style={styles.permCard}>
+								<View style={[styles.permCard, Shadows.card]}>
 									<View style={styles.permText}>
 										<Text style={styles.permName}>{p.name}</Text>
 										<Text style={styles.permDesc}>{p.desc}</Text>
 									</View>
-									<NeumorphicView
-										pressed
+									<View
 										style={[
 											styles.badge,
 											p.required ? styles.badgeReq : styles.badgeOpt,
@@ -74,18 +73,19 @@ export default function PermissionsScreen() {
 										>
 											{p.required ? "Required" : "Optional"}
 										</Text>
-									</NeumorphicView>
-								</NeumorphicView>
+									</View>
+								</View>
 							</StaggeredFadeIn>
 						))}
 					</View>
 
-					<NeumorphicView pressed style={styles.note}>
+					<View style={styles.note}>
+						<View style={styles.noteAccentBar} />
 						<Text style={styles.noteText}>
 							Your location is only visible to convoy members and is
 							auto-deleted when the trip ends.
 						</Text>
-					</NeumorphicView>
+					</View>
 
 					<View style={styles.actions}>
 						<Button
@@ -106,16 +106,8 @@ export default function PermissionsScreen() {
 }
 
 const PERMISSIONS = [
-	{
-		name: "Location",
-		desc: "Share live position with convoy only",
-		required: true,
-	},
-	{
-		name: "Notifications",
-		desc: "Stop alerts and emergencies",
-		required: true,
-	},
+	{ name: "Location", desc: "Share live position with convoy only", required: true },
+	{ name: "Notifications", desc: "Stop alerts and emergencies", required: true },
 	{ name: "Camera", desc: "Scan QR codes to join", required: false },
 ];
 
@@ -123,23 +115,36 @@ const styles = StyleSheet.create({
 	safe: { flex: 1, backgroundColor: Colors.bg },
 	flex: { flex: 1 },
 	container: { padding: Spacing.xl, paddingBottom: Spacing.xxl },
+
 	dots: {
 		flexDirection: "row",
 		justifyContent: "center",
-		gap: Spacing.xs,
+		alignItems: "center",
+		gap: 6,
 		marginBottom: Spacing.xxl,
 	},
-	dot: {
+	dotDone: {
 		width: 6,
 		height: 6,
 		borderRadius: 3,
-		backgroundColor: Colors.primaryDim,
+		backgroundColor: Colors.primary,
 	},
-	dotActive: { width: 22, borderRadius: 3, backgroundColor: Colors.primary },
-	dotDone: { width: 6, backgroundColor: Colors.textPrimary },
+	dotPill: {
+		width: 24,
+		height: 6,
+		borderRadius: 3,
+		backgroundColor: Colors.primary,
+	},
+	dotInactive: {
+		width: 6,
+		height: 6,
+		borderRadius: 3,
+		backgroundColor: "#1a1a1a",
+	},
+
 	title: {
 		fontSize: FontSize.xxl,
-		fontWeight: FontWeight.light,
+		fontWeight: "700",
 		color: Colors.textPrimary,
 		marginBottom: Spacing.sm,
 		letterSpacing: -0.5,
@@ -149,8 +154,9 @@ const styles = StyleSheet.create({
 		color: Colors.textMuted,
 		lineHeight: 22,
 		marginBottom: Spacing.xl,
-		fontWeight: FontWeight.regular,
+		fontWeight: "400",
 	},
+
 	permList: { gap: Spacing.md, marginBottom: Spacing.lg },
 	permCard: {
 		backgroundColor: Colors.bgCard,
@@ -159,11 +165,13 @@ const styles = StyleSheet.create({
 		flexDirection: "row",
 		alignItems: "center",
 		gap: Spacing.md,
+		borderWidth: 1,
+		borderColor: Colors.border,
 	},
 	permText: { flex: 1 },
 	permName: {
 		fontSize: FontSize.md,
-		fontWeight: FontWeight.semibold,
+		fontWeight: "600",
 		color: Colors.textPrimary,
 	},
 	permDesc: {
@@ -171,33 +179,40 @@ const styles = StyleSheet.create({
 		color: Colors.textMuted,
 		marginTop: 4,
 		lineHeight: 18,
-		fontWeight: FontWeight.regular,
+		fontWeight: "400",
 	},
 	badge: {
 		borderRadius: Radius.full,
 		paddingHorizontal: Spacing.sm,
-		paddingVertical: 6,
+		paddingVertical: 5,
 	},
-	badgeReq: { backgroundColor: Colors.primary },
-	badgeOpt: { backgroundColor: Colors.bgElevated },
-	badgeText: {
-		fontSize: FontSize.xs,
-		fontWeight: FontWeight.semibold,
-		letterSpacing: 0.3,
-	},
-	badgeTextReq: { color: "#fff" },
+	badgeReq: { backgroundColor: Colors.primaryDim, borderWidth: 1, borderColor: Colors.primaryBorder },
+	badgeOpt: { backgroundColor: "rgba(255,255,255,0.05)" },
+	badgeText: { fontSize: FontSize.xs, fontWeight: "600", letterSpacing: 0.3 },
+	badgeTextReq: { color: Colors.primary },
 	badgeTextOpt: { color: Colors.textMuted },
+
 	note: {
-		padding: Spacing.lg,
-		backgroundColor: Colors.bgCard,
+		flexDirection: "row",
+		backgroundColor: Colors.bgAccent,
 		borderRadius: Radius.lg,
 		marginBottom: Spacing.xl,
+		overflow: "hidden",
+	},
+	noteAccentBar: {
+		width: 3,
+		backgroundColor: Colors.primary,
+		borderTopLeftRadius: Radius.lg,
+		borderBottomLeftRadius: Radius.lg,
 	},
 	noteText: {
+		flex: 1,
+		padding: Spacing.lg,
 		fontSize: FontSize.sm,
 		color: Colors.textSecondary,
 		lineHeight: 20,
-		fontWeight: FontWeight.regular,
+		fontWeight: "400",
 	},
+
 	actions: { gap: Spacing.md },
 });

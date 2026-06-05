@@ -91,14 +91,9 @@ export function Stepper({
 				activeOpacity={0.85}
 				style={stepperStyles.btnTap}
 			>
-				<NeumorphicView
-					style={[
-						stepperStyles.btn,
-						value <= min && stepperStyles.btnDisabled,
-					]}
-				>
+				<View style={[stepperStyles.btn, value <= min && stepperStyles.btnDisabled]}>
 					<Text style={stepperStyles.btnText}>−</Text>
-				</NeumorphicView>
+				</View>
 			</TouchableOpacity>
 			<View style={stepperStyles.valueBox}>
 				<Text style={stepperStyles.value}>
@@ -112,14 +107,9 @@ export function Stepper({
 				activeOpacity={0.85}
 				style={stepperStyles.btnTap}
 			>
-				<NeumorphicView
-					style={[
-						stepperStyles.btn,
-						value >= max && stepperStyles.btnDisabled,
-					]}
-				>
+				<View style={[stepperStyles.btn, value >= max && stepperStyles.btnDisabled]}>
 					<Text style={stepperStyles.btnText}>+</Text>
-				</NeumorphicView>
+				</View>
 			</TouchableOpacity>
 		</View>
 	);
@@ -221,7 +211,7 @@ const chipStyles = StyleSheet.create({
 		fontWeight: FontWeight.medium,
 	},
 	labelSelected: {
-		color: Colors.bgElevated,
+		color: Colors.textPrimary,
 		fontWeight: FontWeight.semibold,
 	},
 });

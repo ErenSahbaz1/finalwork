@@ -79,7 +79,7 @@ const STATUS_LABEL: Record<StopStatus, string> = {
 const STATUS_COLOR: Record<StopStatus, string> = {
 	proposed: Colors.bgElevated,
 	confirmed: Colors.primary,
-	passed: Colors.border,
+	passed: Colors.textMuted,
 	cancelled: Colors.danger,
 };
 
@@ -90,13 +90,15 @@ const STATUS_TEXT_ON_DARK: Record<StopStatus, boolean> = {
 	cancelled: true,
 };
 
+// Stops use text colors from the status directly on the chip text
+
 // Left-border accent that signals stop status at a glance on each card.
 // Built outside the styles block so TS can resolve the lookup by key.
 const STATUS_BORDER: Record<StopStatus, { borderLeftWidth: number; borderLeftColor: string }> = {
-	proposed: { borderLeftWidth: 4, borderLeftColor: "#999999" },
-	confirmed: { borderLeftWidth: 4, borderLeftColor: "#1a1a1a" },
-	passed: { borderLeftWidth: 4, borderLeftColor: "#999999" },
-	cancelled: { borderLeftWidth: 4, borderLeftColor: "#dc2626" },
+	proposed: { borderLeftWidth: 2, borderLeftColor: Colors.textMuted },
+	confirmed: { borderLeftWidth: 2, borderLeftColor: Colors.primary },
+	passed: { borderLeftWidth: 2, borderLeftColor: Colors.textMuted },
+	cancelled: { borderLeftWidth: 2, borderLeftColor: Colors.danger },
 };
 
 const DURATION_OPTIONS = [
@@ -1446,27 +1448,29 @@ function ProposeStopSheet({
 								styles={{
 									container: { flex: 0 },
 									textInput: {
-										backgroundColor: "#ffffff",
+										backgroundColor: Colors.bgElevated,
 										borderRadius: 12,
 										borderWidth: 1,
-										borderColor: "#e8e8e8",
+										borderColor: Colors.border,
 										fontSize: 15,
-										color: "#1a1a1a",
+										color: "#ffffff",
 										paddingHorizontal: 14,
 										height: 48,
 									},
 									listView: {
-										backgroundColor: "#ffffff",
+										backgroundColor: "#111111",
 										borderRadius: 12,
 										marginTop: 4,
+										borderWidth: 1,
+										borderColor: Colors.border,
 										shadowColor: "#000",
-										shadowOffset: { width: 0, height: 4 },
-										shadowOpacity: 0.08,
-										shadowRadius: 12,
-										elevation: 4,
+										shadowOffset: { width: 0, height: 6 },
+										shadowOpacity: 0.5,
+										shadowRadius: 14,
+										elevation: 8,
 									},
-									row: { backgroundColor: "#ffffff", padding: 12 },
-									description: { fontSize: 14, color: "#1a1a1a" },
+									row: { backgroundColor: "#111111", padding: 12 },
+									description: { fontSize: 14, color: "#ffffff" },
 								}}
 							/>
 						) : (
@@ -1845,14 +1849,19 @@ const styles = StyleSheet.create({
 	modalRoot: { flex: 1, justifyContent: "flex-end" },
 	modalBackdrop: {
 		...StyleSheet.absoluteFillObject,
-		backgroundColor: "rgba(0,0,0,0.4)",
+		backgroundColor: "rgba(0,0,0,0.7)",
 	},
 	sheet: {
-		backgroundColor: Colors.bgCard,
+		backgroundColor: "#0f0f0f",
 		borderTopLeftRadius: 24,
 		borderTopRightRadius: 24,
 		maxHeight: "90%",
-		...Shadow.lg,
+		borderTopWidth: 1,
+		borderTopColor: Colors.border,
+		borderLeftWidth: 1,
+		borderLeftColor: Colors.border,
+		borderRightWidth: 1,
+		borderRightColor: Colors.border,
 	},
 	sheetHandle: {
 		alignSelf: "center",

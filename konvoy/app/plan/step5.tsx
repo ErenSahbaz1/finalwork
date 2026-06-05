@@ -173,13 +173,7 @@ export default function PlanStep5() {
 												activeOpacity={0.85}
 												style={styles.addBtnTap}
 											>
-												<NeumorphicView
-													pressed={sel}
-													style={[
-														styles.addBtn,
-														sel && styles.addBtnSel,
-													]}
-												>
+												<View style={[styles.addBtn, sel && styles.addBtnSel]}>
 													<Text
 														style={[
 															styles.addBtnText,
@@ -188,7 +182,7 @@ export default function PlanStep5() {
 													>
 														{sel ? "✓ Added" : "+ Add"}
 													</Text>
-												</NeumorphicView>
+												</View>
 											</TouchableOpacity>
 										</NeumorphicView>
 									</StaggeredFadeIn>
@@ -225,27 +219,25 @@ export default function PlanStep5() {
 							styles={{
 								container: { flex: 0, marginBottom: Spacing.md },
 								textInput: {
-									backgroundColor: "#ffffff",
+									backgroundColor: Colors.bgElevated,
 									borderRadius: 12,
 									borderWidth: 1,
-									borderColor: "#e8e8e8",
+									borderColor: Colors.border,
 									fontSize: 15,
-									color: "#1a1a1a",
+									color: Colors.textPrimary,
 									paddingHorizontal: 14,
 									height: 48,
 								},
 								listView: {
-									backgroundColor: "#ffffff",
+									backgroundColor: "#111111",
 									borderRadius: 12,
 									marginTop: 4,
-									shadowColor: "#000",
-									shadowOffset: { width: 0, height: 4 },
-									shadowOpacity: 0.08,
-									shadowRadius: 12,
-									elevation: 4,
+									borderWidth: 1,
+									borderColor: Colors.border,
 								},
-								row: { backgroundColor: "#ffffff", padding: 12 },
-								description: { fontSize: 14, color: "#1a1a1a" },
+								row: { backgroundColor: "#111111", padding: 12 },
+								description: { fontSize: 14, color: Colors.textPrimary },
+								separator: { backgroundColor: Colors.borderSubtle },
 							}}
 						/>
 					) : (
@@ -350,7 +342,7 @@ const styles = StyleSheet.create({
 		fontWeight: FontWeight.semibold,
 		color: Colors.textPrimary,
 	},
-	addBtnTextSel: { color: Colors.bgElevated },
+	addBtnTextSel: { color: Colors.textPrimary },
 
 	// Skeleton / loading
 	skeletonList: { gap: Spacing.md, marginBottom: Spacing.lg },

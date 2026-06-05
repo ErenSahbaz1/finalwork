@@ -790,7 +790,7 @@ export default function SettingsScreen() {
 											value={privacy[row.key]}
 											onValueChange={() => togglePrivacy(row.key)}
 											trackColor={{
-												false: Colors.primaryDim,
+												false: "#1a1a1a",
 												true: Colors.primary,
 											}}
 											thumbColor="#fff"
@@ -1094,7 +1094,7 @@ const styles = StyleSheet.create({
 	},
 	title: {
 		fontSize: FontSize.xxl,
-		fontWeight: FontWeight.light,
+		fontWeight: "700",
 		color: Colors.textPrimary,
 		letterSpacing: -0.5,
 		marginBottom: Spacing.md,
@@ -1214,14 +1214,14 @@ const styles = StyleSheet.create({
 		alignItems: "center",
 		justifyContent: "center",
 	},
-	chipSelected: { backgroundColor: Colors.bgElevated },
+	chipSelected: { backgroundColor: Colors.bgAccent, borderWidth: 1, borderColor: Colors.borderAccent },
 	chipText: {
 		fontSize: FontSize.sm,
 		color: Colors.textSecondary,
 		fontWeight: FontWeight.medium,
 	},
 	chipTextSelected: {
-		color: Colors.textPrimary,
+		color: Colors.primary,
 		fontWeight: FontWeight.semibold,
 	},
 
@@ -1296,15 +1296,17 @@ const styles = StyleSheet.create({
 		alignItems: "center",
 	},
 	toast: {
-		backgroundColor: Colors.primary,
+		backgroundColor: Colors.bgAccent,
 		borderRadius: Radius.full,
 		paddingHorizontal: Spacing.lg,
 		paddingVertical: Spacing.sm,
 		minWidth: 120,
 		alignItems: "center",
+		borderWidth: 1,
+		borderColor: Colors.borderAccent,
 	},
 	toastText: {
-		color: Colors.bgElevated,
+		color: Colors.primary,
 		fontSize: FontSize.sm,
 		fontWeight: FontWeight.semibold,
 		letterSpacing: 0.3,
@@ -1313,17 +1315,19 @@ const styles = StyleSheet.create({
 	// Modals
 	modalRoot: {
 		flex: 1,
-		backgroundColor: "rgba(0,0,0,0.4)",
+		backgroundColor: "rgba(0,0,0,0.7)",
 		alignItems: "center",
 		justifyContent: "center",
 		padding: Spacing.xl,
 	},
 	modalCard: {
-		backgroundColor: Colors.bgCard,
+		backgroundColor: "#111111",
 		borderRadius: Radius.xl,
 		padding: Spacing.xl,
 		width: "100%",
 		maxWidth: 400,
+		borderWidth: 1,
+		borderColor: Colors.border,
 	},
 	modalTitle: {
 		fontSize: FontSize.lg,

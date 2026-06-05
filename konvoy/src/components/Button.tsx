@@ -1,161 +1,115 @@
-import React, { useRef, useState } from "react";
+import React, { useRef } from "react";
 import {
-	ActivityIndicator,
-	Animated,
-	Pressable,
-	StyleSheet,
-	Text,
-	ViewStyle,
+  ActivityIndicator,
+  Animated,
+  Pressable,
+  StyleSheet,
+  Text,
+  ViewStyle,
 } from "react-native";
-import {
-	Colors,
-	FontSize,
-	FontWeight,
-	Radius,
-	Shadow,
-	Spacing,
-	Sizing,
-} from "../constants/theme";
-import { NeumorphicView } from "./NeumorphicView";
+import { Colors, FontSize, FontWeight, Radius, Shadows, Spacing, Sizing } from "../constants/theme";
 
 interface ButtonProps {
-	label: string;
-	onPress: () => void;
-	variant?: "primary" | "ghost" | "danger";
-	loading?: boolean;
-	disabled?: boolean;
-	style?: ViewStyle;
+  label: string;
+  onPress: () => void;
+  variant?: "primary" | "ghost" | "danger";
+  loading?: boolean;
+  disabled?: boolean;
+  style?: ViewStyle;
 }
 
 export function Button({
-	label,
-	onPress,
-	variant = "primary",
-	loading,
-	disabled,
-	style,
+  label,
+  onPress,
+  variant = "primary",
+  loading,
+  disabled,
+  style,
 }: ButtonProps) {
-	const scale = useRef(new Animated.Value(1)).current;
-	const [pressed, setPressed] = useState(false);
-	const isGhost = variant === "ghost";
+  const scale = useRef(new Animated.Value(1)).current;
 
-	function handlePressIn() {
-		setPressed(true);
-		Animated.spring(scale, {
-			toValue: 0.96,
-			useNativeDriver: true,
-		}).start();
-	}
+  function handlePressIn() {
+    Animated.spring(scale, {
+      toValue: 0.96,
+      useNativeDriver: true,
+      speed: 30,
+      bounciness: 0,
+    }).start();
+  }
 
-	function handlePressOut() {
-		setPressed(false);
-		Animated.spring(scale, {
-			toValue: 1,
-			useNativeDriver: true,
-		}).start();
-	}
+  function handlePressOut() {
+    Animated.spring(scale, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 30,
+      bounciness: 0,
+    }).start();
+  }
 
-	const labelColor = isGhost ? Colors.textPrimary : Colors.bgElevated;
+  const isGhost = variant === "ghost";
+  const isPrimary = variant === "primary";
+  const isDanger = variant === "danger";
 
-	const content = (
-		<Pressable
-			onPress={onPress}
-			onPressIn={handlePressIn}
-			onPressOut={handlePressOut}
-			disabled={disabled || loading}
-			style={styles.pressable}
-		>
-			{loading ? (
-				<ActivityIndicator color={labelColor} size="small" />
-			) : (
-				<Text style={[styles.label, isGhost && styles.labelGhost]}>
-					{label}
-				</Text>
-			)}
-		</Pressable>
-	);
+  const shadowStyle = isPrimary || isDanger ? Shadows.glow : {};
+  const bgStyle = isPrimary
+    ? styles.primary
+    : isDanger
+      ? styles.danger
+      : styles.ghost;
 
-	if (isGhost) {
-		return (
-			<Animated.View
-				style={[styles.animated, { transform: [{ scale }] }, style]}
-			>
-				<NeumorphicView
-					pressed={pressed}
-					style={[
-						styles.base,
-						styles.ghost,
-						(disabled || loading) && styles.disabled,
-					]}
-				>
-					{content}
-				</NeumorphicView>
-			</Animated.View>
-		);
-	}
+  const labelStyle = isGhost ? styles.labelGhost : styles.label;
 
-	return (
-		<Animated.View style={[styles.animated, { transform: [{ scale }] }, style]}>
-			<Pressable
-				onPress={onPress}
-				onPressIn={handlePressIn}
-				onPressOut={handlePressOut}
-				disabled={disabled || loading}
-				style={[
-					styles.base,
-					styles.pressable,
-					styles[variant],
-					Shadow.shadowFloat,
-					(disabled || loading) && styles.disabled,
-				]}
-			>
-				{loading ? (
-					<ActivityIndicator color={Colors.bgElevated} size="small" />
-				) : (
-					<Text style={styles.label}>{label}</Text>
-				)}
-			</Pressable>
-		</Animated.View>
-	);
+  return (
+    <Animated.View style={[styles.animated, { transform: [{ scale }] }, style]}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        disabled={disabled || loading}
+        style={[styles.base, bgStyle, shadowStyle, (disabled || loading) && styles.disabled]}
+      >
+        {loading ? (
+          <ActivityIndicator color={isGhost ? Colors.textSecondary : "#fff"} size="small" />
+        ) : (
+          <Text style={labelStyle}>{label}</Text>
+        )}
+      </Pressable>
+    </Animated.View>
+  );
 }
 
 const styles = StyleSheet.create({
-	animated: {
-		alignSelf: "stretch",
-	},
-	pressable: {
-		alignItems: "center",
-		justifyContent: "center",
-		minHeight: Sizing.touchTarget,
-		paddingVertical: Spacing.buttonY,
-		paddingHorizontal: Spacing.buttonX,
-	},
-	base: {
-		borderRadius: Radius.full,
-		minHeight: Sizing.touchTarget,
-	},
-	primary: {
-		backgroundColor: Colors.primary,
-	},
-	ghost: {
-		backgroundColor: Colors.bg,
-		borderWidth: 1,
-		borderColor: Colors.primaryBorder,
-	},
-	danger: {
-		backgroundColor: Colors.danger,
-	},
-	disabled: {
-		opacity: 0.6,
-	},
-	label: {
-		color: Colors.bgElevated,
-		fontSize: FontSize.md,
-		fontWeight: FontWeight.semibold,
-		letterSpacing: 0.2,
-	},
-	labelGhost: {
-		color: Colors.textPrimary,
-		fontWeight: FontWeight.medium,
-	},
+  animated: { alignSelf: "stretch" },
+  base: {
+    borderRadius: Radius.lg,
+    minHeight: Sizing.touchTarget,
+    paddingVertical: Spacing.buttonY,
+    paddingHorizontal: Spacing.buttonX,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primary: {
+    backgroundColor: Colors.primary,
+  },
+  ghost: {
+    backgroundColor: Colors.bgCard,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  danger: {
+    backgroundColor: Colors.danger,
+  },
+  disabled: { opacity: 0.45 },
+  label: {
+    color: "#ffffff",
+    fontSize: FontSize.md,
+    fontWeight: "600",
+    letterSpacing: 0.2,
+  },
+  labelGhost: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.medium,
+    letterSpacing: 0.2,
+  },
 });

@@ -92,10 +92,7 @@ export default function PlanStep4() {
 								>
 									<NeumorphicView
 										pressed={selected}
-										style={[
-											styles.sleepCard,
-											selected && styles.sleepCardSel,
-										]}
+										style={[styles.sleepCard, selected && styles.sleepCardSel]}
 									>
 										<Text style={styles.sleepIcon}>{opt.icon}</Text>
 										<Text
@@ -218,7 +215,7 @@ const styles = StyleSheet.create({
 		textAlign: "center",
 	},
 	sleepLabelSel: {
-		color: Colors.bgElevated,
+		color: Colors.textPrimary,
 		fontWeight: FontWeight.semibold,
 	},
 	chipsRow: {
@@ -249,6 +246,6 @@ const styles = StyleSheet.create({
 		fontWeight: FontWeight.medium,
 		letterSpacing: 2,
 	},
-	starTextSel: { color: Colors.bgElevated },
+	starTextSel: { color: Colors.textPrimary },
 	actions: { marginTop: Spacing.xl },
 });

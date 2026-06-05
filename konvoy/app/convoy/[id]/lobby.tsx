@@ -8,7 +8,9 @@ import {
 	TouchableOpacity,
 	ActivityIndicator,
 	Share,
+	Alert,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "../../../src/lib/supabase";
 import { Button } from "../../../src/components/Button";
@@ -74,6 +76,7 @@ export default function ConvoyLobbyScreen() {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
 	const [starting, setStarting] = useState(false);
+	const [endingConvoy, setEndingConvoy] = useState(false);
 
 	async function fetchMembers(convoyId: string) {
 		const { data, error: memErr } = await supabase
@@ -148,9 +151,11 @@ export default function ConvoyLobbyScreen() {
 					filter: `id=eq.${id}`,
 				},
 				(payload) => {
-					setConvoy((prev) =>
-						prev ? { ...prev, ...(payload.new as Convoy) } : prev,
-					);
+					const updated = payload.new as Convoy;
+					setConvoy((prev) => (prev ? { ...prev, ...updated } : prev));
+					if (updated.status === "ended") {
+						router.replace(`/convoy/${id}/summary`);
+					}
 				},
 			)
 			.subscribe();
@@ -182,6 +187,53 @@ export default function ConvoyLobbyScreen() {
 		await Share.share({
 			message: `Join my Convoi. Use code: ${convoy.invite_code}`,
 		});
+	}
+
+	async function handleEndConvoy() {
+		if (!convoy || endingConvoy) return;
+		setEndingConvoy(true);
+		setError("");
+		try {
+			const { error: updErr } = await supabase
+				.from("convoys")
+				.update({ status: "ended", ended_at: new Date().toISOString() })
+				.eq("id", convoy.id);
+			if (updErr) throw updErr;
+
+			const privacyRaw = await AsyncStorage.getItem("convoi_privacy_settings");
+			const settings = privacyRaw ? JSON.parse(privacyRaw) : {};
+
+			if (settings.autoWipe !== false) {
+				const { data: memberRows } = await supabase
+					.from("convoy_members")
+					.select("id")
+					.eq("convoy_id", convoy.id);
+				if (memberRows && memberRows.length > 0) {
+					const memberIds = (memberRows as any[]).map((m) => m.id);
+					await supabase
+						.from("live_positions")
+						.delete()
+						.in("convoy_member_id", memberIds);
+				}
+			}
+
+			router.replace(`/convoy/${convoy.id}/summary`);
+		} catch (e: any) {
+			setError(e?.message ?? "Couldn't end the convoy.");
+		} finally {
+			setEndingConvoy(false);
+		}
+	}
+
+	function confirmEndConvoy() {
+		Alert.alert(
+			"End convoy?",
+			"This will close the convoy for all members. This cannot be undone.",
+			[
+				{ text: "Cancel", style: "cancel" },
+				{ text: "End convoy", style: "destructive", onPress: handleEndConvoy },
+			],
+		);
 	}
 
 	async function handleStart() {
@@ -289,6 +341,14 @@ export default function ConvoyLobbyScreen() {
 						/>
 					</NeumorphicView>
 
+					<TouchableOpacity
+						style={styles.overviewBtn}
+						onPress={() => router.push(`/convoy/${id}/overview`)}
+						activeOpacity={0.8}
+					>
+						<Text style={styles.overviewBtnText}>📋  Trip Overview</Text>
+					</TouchableOpacity>
+
 					<Text style={styles.sectionTitle}>
 						Members ({members.length})
 					</Text>
@@ -367,16 +427,28 @@ export default function ConvoyLobbyScreen() {
 					) : null}
 				</ScrollView>
 
-				{isLeader && convoy.status === "preparation" ? (
-					<View style={styles.footer}>
+				<View style={styles.footer}>
+					{isLeader && convoy.status === "preparation" ? (
 						<Button
 							label="Start convoy"
 							onPress={handleStart}
 							loading={starting}
 							disabled={members.length === 0}
 						/>
-					</View>
-				) : null}
+					) : null}
+					{isLeader && convoy.status !== "ended" ? (
+						<TouchableOpacity
+							style={styles.endConvoyBtn}
+							onPress={confirmEndConvoy}
+							disabled={endingConvoy}
+							activeOpacity={0.8}
+						>
+							<Text style={styles.endConvoyText}>
+								{endingConvoy ? "Ending…" : "End convoy"}
+							</Text>
+						</TouchableOpacity>
+					) : null}
+				</View>
 			</FadeInView>
 		</SafeAreaView>
 	);
@@ -440,18 +512,37 @@ const styles = StyleSheet.create({
 		letterSpacing: 0.6,
 		color: Colors.textSecondary,
 	},
-	statusChipTextOnDark: { color: Colors.bgElevated },
-	statusPreparation: { backgroundColor: Colors.bgElevated },
-	statusDriving: { backgroundColor: Colors.primary },
-	statusPaused: { backgroundColor: Colors.primaryDim },
-	statusEnded: { backgroundColor: Colors.danger },
+	statusChipTextOnDark: { color: "#ffffff" },
+	statusPreparation: { backgroundColor: Colors.bgElevated, borderWidth: 1, borderColor: Colors.border },
+	statusDriving: { backgroundColor: Colors.primaryDim, borderWidth: 1, borderColor: Colors.primaryBorder },
+	statusPaused: { backgroundColor: "rgba(217,119,6,0.12)", borderWidth: 1, borderColor: "rgba(217,119,6,0.25)" },
+	statusEnded: { backgroundColor: Colors.bgElevated, borderWidth: 1, borderColor: Colors.border },
 
+	overviewBtn: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "center",
+		gap: 8,
+		padding: 14,
+		borderRadius: 14,
+		backgroundColor: "rgba(245,158,11,0.10)",
+		borderWidth: 1,
+		borderColor: "rgba(245,158,11,0.25)",
+		marginBottom: 16,
+	},
+	overviewBtnText: {
+		fontSize: 14,
+		fontWeight: FontWeight.semibold,
+		color: "#f59e0b",
+	},
 	inviteCard: {
 		alignItems: "center",
-		backgroundColor: Colors.bgCard,
+		backgroundColor: Colors.bgAccent,
 		borderRadius: Radius.xl,
 		padding: Spacing.xl,
 		marginBottom: Spacing.xl,
+		borderWidth: 1,
+		borderColor: Colors.borderAccent,
 	},
 	inviteLabel: {
 		fontSize: FontSize.xs,
@@ -465,7 +556,7 @@ const styles = StyleSheet.create({
 		fontFamily: Mono,
 		fontSize: 38,
 		fontWeight: FontWeight.semibold,
-		color: Colors.textPrimary,
+		color: "#ffffff",
 		letterSpacing: 6,
 	},
 	inviteExpiry: {
@@ -519,10 +610,10 @@ const styles = StyleSheet.create({
 		letterSpacing: 0.6,
 		color: Colors.textSecondary,
 	},
-	roleChipTextOnDark: { color: Colors.bgElevated },
-	roleLeader: { backgroundColor: Colors.primary },
-	roleCoLeader: { backgroundColor: Colors.primaryDim },
-	roleMember: { backgroundColor: Colors.bgElevated },
+	roleChipTextOnDark: { color: "#ffffff" },
+	roleLeader: { backgroundColor: Colors.primaryDim, borderWidth: 1, borderColor: Colors.primaryBorder },
+	roleCoLeader: { backgroundColor: "rgba(37,99,235,0.12)", borderWidth: 1, borderColor: "rgba(37,99,235,0.25)" },
+	roleMember: { backgroundColor: Colors.bgElevated, borderWidth: 1, borderColor: Colors.border },
 
 	statusDotWrap: { flexDirection: "row", alignItems: "center", gap: 6 },
 	statusDot: { width: 8, height: 8, borderRadius: 4 },
@@ -553,6 +644,22 @@ const styles = StyleSheet.create({
 		right: 0,
 		bottom: 0,
 		padding: Spacing.xl,
+		paddingTop: Spacing.lg,
 		backgroundColor: Colors.overlay,
+		gap: Spacing.sm,
+	},
+	endConvoyBtn: {
+		backgroundColor: "rgba(220,38,38,0.10)",
+		borderWidth: 1,
+		borderColor: "rgba(220,38,38,0.30)",
+		borderRadius: 14,
+		padding: 14,
+		alignItems: "center",
+		marginTop: 4,
+	},
+	endConvoyText: {
+		fontSize: 14,
+		fontWeight: "600",
+		color: "#dc2626",
 	},
 });
