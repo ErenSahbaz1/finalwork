@@ -8,6 +8,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import { askGemini, parseGeminiJson } from "./gemini";
+import { haversineKm } from "./geo";
 import { APPROX_PREFIX, findPlaceNear } from "./places";
 import type {
 	AiSuggestion,
@@ -156,13 +157,18 @@ Generate 3 routes:
 For each route provide a complete day-by-day stop plan.
 
 CRITICAL RULE FOR STOP NAMES:
-Each "name" must be a SPECIFIC real establishment that exists on Google Maps. NEVER use a bare city name. Always include the establishment type and the city.
-  • Fuel stop → name a real chain + location, e.g. "Total E19 Nivelles" or "Shell Autobahn A8 Karlsruhe"
-  • Food stop → name a real restaurant, e.g. "Au Pied de Cochon, Paris" — not just "Paris"
-  • Rest stop → name the specific rest area / aire, e.g. "Aire de Beaune-Tailly A6"
-  • Sightseeing → name the actual landmark, e.g. "Schönbrunn Palace, Vienna" — not just "Vienna"
-  • Overnight → name a real hotel, e.g. "Hilton Budapest, Buda Castle District" — not just "Budapest"
-  • Shopping → name a real mall / market, e.g. "Mall of Berlin"
+Each "name" must be a SPECIFIC real establishment that exists on Google Maps AND that genuinely lies on or near THIS route (${origin.name} → ${destination.name}). NEVER use a bare city name — always include the establishment type and the city. Follow this FORMAT per type (the <…> are placeholders, NOT text to output):
+  • Fuel → "<fuel chain> <road or area>, <city>"   — a real station actually on this leg's motorway
+  • Food → "<restaurant name>, <city>"             — a real restaurant
+  • Rest → "<service area / aire name> <motorway>" — a real rest area on the CORRECT motorway for this leg
+  • Sightseeing → "<landmark name>, <city>"        — a real attraction
+  • Overnight → "<hotel name>, <city>"             — a real hotel
+  • Shopping → "<mall or market name>, <city>"     — a real mall
+
+DO NOT copy these placeholders or any example names literally — choose real places that fit the actual cities and roads of THIS route. The 3 routes must use genuinely DIFFERENT places from each other: do not reuse the same handful of landmarks, hotels, or stations across all 3 — vary them so each route feels distinct.
+
+FUEL STOP DISCIPLINE (very important — do not over-add fuel stops):
+A full tank lasts roughly 600 km. Add a fuel stop ONLY about once every 500-600 km of actual driving — NOT once per city and NOT more than once per day unless that day's driving exceeds ~600 km. Most cities should have ZERO fuel stops. A typical ${tripDays}-day international route needs only 2-4 fuel stops TOTAL. Never place two fuel stops within 400 km of each other. When you do add fuel, prefer putting it on a long highway leg between cities rather than inside a city already full of sightseeing/food/hotel stops.
 
 Each stop needs: name (specific establishment per the rule above), type (one of: fuel, food, rest, sightseeing, overnight, shopping), lat, lng, duration_min, notes, isOvernight (boolean), hotelName (if overnight hotel), hotelStars (1-5 if hotel), estimatedCost (EUR, optional).
 
@@ -212,6 +218,13 @@ Respond in JSON only, no other text:
 		stops: Array.isArray(r.stops) ? r.stops.map(normalizeStop) : [],
 	}));
 
+	// Safety net: the LLM still tends to over-add fuel stops (one per city). Thin
+	// them down so consecutive fuel stops are realistically far apart, regardless
+	// of what the model produced.
+	for (const route of routes) {
+		route.stops = thinFuelStops(route.stops);
+	}
+
 	// ── Geocode every AI-generated stop in parallel ──────────────────────────
 	// Gemini's lat/lng are guesses — accurate to within a city, but rarely on
 	// any actual establishment. We replace them with real Places coordinates
@@ -259,6 +272,48 @@ Respond in JSON only, no other text:
 	]);
 
 	return routes;
+}
+
+// Remove over-frequent fuel stops. Walking the route in (day, order) sequence
+// we keep a fuel stop only when at least MIN_FUEL_GAP_KM of (straight-line)
+// distance has accumulated since the last kept fuel stop. Haversine
+// under-estimates road distance by ~20-30%, so a 350 km straight-line gap maps
+// to roughly ~450 km of real driving — about one refuel per tank. Non-fuel
+// stops are always kept and still count toward the running distance.
+function thinFuelStops(stops: PlannedStop[]): PlannedStop[] {
+	const MIN_FUEL_GAP_KM = 350;
+
+	// Work on the intended travel sequence.
+	const sequence = [...stops].sort((a, b) => {
+		if (a.day !== b.day) return a.day - b.day;
+		return (a.order ?? 0) - (b.order ?? 0);
+	});
+
+	const kept: PlannedStop[] = [];
+	let cumKm = 0;
+	let lastFuelKm = Number.NEGATIVE_INFINITY; // first fuel stop is always kept
+	let prev: PlannedStop | null = null;
+
+	for (const stop of sequence) {
+		if (prev) {
+			cumKm += haversineKm(
+				{ lat: prev.lat, lng: prev.lng },
+				{ lat: stop.lat, lng: stop.lng },
+			);
+		}
+		prev = stop;
+
+		if (stop.type === "fuel") {
+			if (cumKm - lastFuelKm < MIN_FUEL_GAP_KM) {
+				// Too soon since the last fuel stop — drop this one.
+				continue;
+			}
+			lastFuelKm = cumKm;
+		}
+		kept.push(stop);
+	}
+
+	return kept;
 }
 
 function normalizeStop(s: any): PlannedStop {

@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "../../../src/lib/supabase";
+import { fetchDrivingLegs } from "../../../src/lib/directions";
 import { Radius } from "../../../src/constants/theme";
 import type {
 	Convoy,
@@ -130,6 +131,12 @@ export default function TripOverviewScreen() {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
 
+	// Real driving distances (km) per leg, from the Directions API. null until
+	// loaded (or when unavailable) — in which case we show the straight-line
+	// haversine estimate instead.
+	const [legKm, setLegKm] = useState<number[] | null>(null);
+	const [drivingTotalKm, setDrivingTotalKm] = useState<number | null>(null);
+
 	const fadeAnim = useRef(new Animated.Value(0)).current;
 	const slideAnim = useRef(new Animated.Value(20)).current;
 
@@ -220,7 +227,41 @@ export default function TripOverviewScreen() {
 		[activeStops],
 	);
 
-	const totalKm = useMemo(() => {
+	// Stable signature of the ordered stop coordinates — changes only when a stop
+	// is added/removed/moved, so the Directions fetch (and its cache) keys off it.
+	const stopsSignature = useMemo(
+		() =>
+			activeStops
+				.map((s) => `${s.lat.toFixed(4)},${s.lng.toFixed(4)}`)
+				.join("|"),
+		[activeStops],
+	);
+
+	// Fetch real driving distances once per coordinate set (cached in
+	// AsyncStorage by the helper). Falls back silently to haversine on any miss.
+	useEffect(() => {
+		let cancelled = false;
+		if (activeStops.length < 2) {
+			setLegKm(null);
+			setDrivingTotalKm(null);
+			return;
+		}
+		(async () => {
+			const result = await fetchDrivingLegs(
+				activeStops.map((s) => ({ lat: s.lat, lng: s.lng })),
+			);
+			if (cancelled || !result) return;
+			setLegKm(result.legKm);
+			setDrivingTotalKm(result.totalKm);
+		})();
+		return () => {
+			cancelled = true;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [stopsSignature]);
+
+	// Straight-line fallback total (used until/unless real driving total loads).
+	const haversineTotalKm = useMemo(() => {
 		if (activeStops.length < 2) return 0;
 		let sum = 0;
 		for (let i = 1; i < activeStops.length; i++) {
@@ -231,6 +272,10 @@ export default function TripOverviewScreen() {
 		}
 		return sum;
 	}, [activeStops]);
+
+	// Prefer the real driving total when available.
+	const totalKm = drivingTotalKm ?? haversineTotalKm;
+	const isDrivingDistance = drivingTotalKm != null;
 
 	const totalDriveMin = useMemo(() => {
 		const driveMin = totalKm > 0 ? (totalKm / 90) * 60 : 0;
@@ -336,8 +381,12 @@ export default function TripOverviewScreen() {
 					{/* ── Stats strip ───────────────────────────────────────────── */}
 					<View style={styles.statsStrip}>
 						<StatBox
-							label="DISTANCE"
-							value={totalKm > 0 ? formatKm(totalKm) : "—"}
+							label={isDrivingDistance ? "DISTANCE" : "DISTANCE ≈"}
+							value={
+								totalKm > 0
+									? `${isDrivingDistance ? "" : "≈ "}${formatKm(totalKm)}`
+									: "—"
+							}
 						/>
 						<View style={styles.statsDivider} />
 						<StatBox
@@ -425,19 +474,19 @@ export default function TripOverviewScreen() {
 									const isLast = idx === activeStops.length - 1;
 									const nodeColor =
 										STOP_STATUS_COLOR[stop.status] ?? C.textMuted;
-									const segKm =
-										!isLast
-											? haversineKm(
-													{
-														lat: stop.lat,
-														lng: stop.lng,
-													},
-													{
-														lat: activeStops[idx + 1].lat,
-														lng: activeStops[idx + 1].lng,
-													},
-												)
-											: null;
+									const segKm = isLast
+										? null
+										: (legKm?.[idx] ??
+											haversineKm(
+												{
+													lat: stop.lat,
+													lng: stop.lng,
+												},
+												{
+													lat: activeStops[idx + 1].lat,
+													lng: activeStops[idx + 1].lng,
+												},
+											));
 
 									return (
 										<View key={stop.id}>

@@ -30,6 +30,7 @@ import type {
 	PlannedStop,
 } from "../../src/store/planStore";
 import { generateRoutes, generateInviteCode } from "../../src/lib/planner";
+import { orderStopsByProximity } from "../../src/lib/geo";
 import { supabase } from "../../src/lib/supabase";
 import { useUserStore } from "../../src/store/userStore";
 
@@ -199,9 +200,8 @@ export default function PlanResults() {
 			// NULL for lat/lng and would otherwise reject the entire batch,
 			// stranding the user on the "Creating your convoy…" spinner.
 			if (route.stops.length > 0) {
-				// Sort planner stops by (day, order) so the resulting order_index
-				// matches the chronological flow the wizard built.
-				const ordered = [...route.stops]
+				// Start from the planner's (day, order) sequence …
+				const byDayOrder = [...route.stops]
 					.filter(
 						(s) =>
 							Number.isFinite(s.lat) &&
@@ -212,6 +212,16 @@ export default function PlanResults() {
 						if (a.day !== b.day) return a.day - b.day;
 						return (a.order ?? 0) - (b.order ?? 0);
 					});
+
+				// … then geographically re-sequence with a nearest-neighbour pass
+				// anchored at the real origin city. The LLM occasionally emits a
+				// backtracking order (e.g. a far-east stop placed mid-route); this
+				// removes those zig-zags so order_index reflects an actual drivable
+				// progression. Zero API cost — pure haversine.
+				const ordered = orderStopsByProximity(byDayOrder, {
+					lat: origin.lat,
+					lng: origin.lng,
+				});
 
 				const rows = ordered.map((s, idx) => ({
 					convoy_id: convoy.id,
