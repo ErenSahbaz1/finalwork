@@ -156,6 +156,16 @@ Generate 3 routes:
 
 For each route provide a complete day-by-day stop plan.
 
+ROUTE PACING & GEOGRAPHY (very important — make the trip physically realistic):
+1. FOLLOW THE REAL CORRIDOR. Stops must progress smoothly along the actual driving route from ${origin.name} to ${destination.name}, passing through the major cities/countries that genuinely lie between them. Do NOT skip a whole country that the route drives through. For a ${origin.name}→${destination.name} trip, include stops in the real intermediate hubs along the way (e.g. for Western Europe→Türkiye that means stopping around Austria/Vienna and Hungary/Budapest, not jumping straight from Germany to Serbia).
+2. CAP EACH LEG. No two consecutive stops may be more than ~500 km apart. If a stretch between cities is longer than that, INSERT an intermediate stop (a city, rest area, or overnight) so the driving is broken up. Never produce a single day with one giant 800+ km leg and no stops in between.
+3. END EACH DAY WITH AN OVERNIGHT. Every day EXCEPT the final arrival day must end with exactly one overnight stop (type "overnight", isOvernight true) in a real city that sits at a sensible point along the route, splitting the total drive into roughly equal daily distances (aim for similar progress each day rather than one huge day and one short day). ${
+		sleepType === "car"
+			? 'Since the group sleeps in the car, name a real motorway service area or rest area as the overnight spot (hotelName empty).'
+			: 'Name a real hotel for each overnight (set hotelName and hotelStars).'
+	} A day must NOT end on a fast-food restaurant or a random fuel station — it ends where the group sleeps. Overnight stops are REQUIRED and do NOT count toward the STOPS PER DAY number.
+4. SPREAD FUEL EVENLY. Distribute fuel stops across the WHOLE route (including the later/eastern legs), not clustered near the start. Cheap-fuel border crossings are a good place to refuel.
+
 CRITICAL RULE FOR STOP NAMES:
 Each "name" must be a SPECIFIC real establishment that exists on Google Maps AND that genuinely lies on or near THIS route (${origin.name} → ${destination.name}). NEVER use a bare city name — always include the establishment type and the city. Follow this FORMAT per type (the <…> are placeholders, NOT text to output):
   • Fuel → "<fuel chain> <road or area>, <city>"   — a real station actually on this leg's motorway
@@ -194,6 +204,19 @@ Respond in JSON only, no other text:
           "duration_min": 45,
           "notes": "Brief description",
           "isOvernight": false
+        },
+        {
+          "day": 1,
+          "order": 2,
+          "name": "Hotel name, City",
+          "type": "overnight",
+          "lat": 48.2,
+          "lng": 16.37,
+          "duration_min": 600,
+          "notes": "Overnight — end of day 1",
+          "isOvernight": true,
+          "hotelName": "Hotel name",
+          "hotelStars": 4
         }
       ]
     }
